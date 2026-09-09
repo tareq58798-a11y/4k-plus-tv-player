@@ -348,6 +348,7 @@ private fun ManualPlaylistScreen(
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
+    val clipboard = LocalClipboardManager.current
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val landscape = maxWidth > maxHeight
         Column(
@@ -367,7 +368,11 @@ private fun ManualPlaylistScreen(
         OutlinedTextField(
             address, { address = it.trim() },
             label = { Text(if (tab == 0) "M3U/M3U8 URL" else "Server address") },
-            trailingIcon = { IconButton(onClick = {}) { Icon(Icons.Default.ContentPaste, "Paste") } },
+            trailingIcon = {
+                IconButton(onClick = { address = clipboard.getText()?.text.orEmpty().trim() }) {
+                    Icon(Icons.Default.ContentPaste, "Paste")
+                }
+            },
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )

@@ -7,6 +7,7 @@
 - GitHub Actions successfully builds a debug APK using Java 17.
 - Latest local commit includes the supplied 4K Plus TV logo, safer screen-edge spacing, and touch feedback.
 - The next functional milestone adds real M3U/provider connection testing, playlist parsing, encrypted source storage, loading/error handling, and real content counts on Home.
+- Version 0.2.1 improves compatibility after a real test returned `Connection reset`: protocol-aware HTTP/HTTPS fallback, VLC-compatible request headers, clearer connection errors, and a working clipboard paste action.
 
 ## Product direction
 
