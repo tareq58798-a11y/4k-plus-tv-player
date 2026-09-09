@@ -13,6 +13,7 @@
 - Version 0.4.1 removes All Channels, puts Recently watched and Favorites first, adds category search, records the 20 most recently selected channels in order, and changes the LIVE status dot to red.
 - Version 0.4.2 opens Live TV on the provider's first category and makes channel and category searches global regardless of the selected category.
 - Version 0.4.3 temporarily hides Recently watched and Favorites during category search so matching server categories appear first, then restores them when search is cleared.
+- Version 0.5.0 redesigns Live TV for portrait browsing with a real Media3 stream preview, a vertical category rail on the left, and a compact channel list on the right. Landscape uses a shorter preview to preserve browsing space.
 
 ## Product direction
 

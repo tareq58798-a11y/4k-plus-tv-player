@@ -48,6 +48,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.datasource.DefaultHttpDataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.ui.PlayerView
 import com.fourkplus.tvplayer.ui.theme.*
 import com.fourkplus.tvplayer.data.LoadedPlaylist
 import com.fourkplus.tvplayer.data.MediaKind
@@ -508,14 +514,13 @@ private fun HomeScreen(
 @Composable
 private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessage: (String) -> Unit) {
     val channels = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.LIVE }.orEmpty() }
-    // Preserve the order supplied by the provider so the first server category
-    // is also the category shown when Live TV opens.
     val categories = remember(channels) { channels.map { it.group }.distinct() }
     val recentlyWatched = "Recently watched"
     val favorites = "Favorites"
     var selectedCategory by remember(playlist) { mutableStateOf(categories.firstOrNull().orEmpty()) }
     var query by remember { mutableStateOf("") }
     var categoryQuery by remember { mutableStateOf("") }
+    var previewChannel by remember(playlist) { mutableStateOf<PlaylistItem?>(null) }
     val context = LocalContext.current
     val favoritesStore = remember { context.getSharedPreferences("favorite_channels", android.content.Context.MODE_PRIVATE) }
     var favoriteIds by remember { mutableStateOf(favoritesStore.getStringSet("ids", emptySet()).orEmpty().toSet()) }
@@ -538,10 +543,22 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
         }
     }
     val filtered = remember(channels, categoryChannels, query) {
-        // Channel search is global. The selected category is only applied when
-        // the search box is empty.
         if (query.isBlank()) categoryChannels
         else channels.filter { it.name.contains(query.trim(), ignoreCase = true) }
+    }
+
+    LaunchedEffect(categoryChannels) {
+        if (previewChannel == null || previewChannel !in categoryChannels) {
+            previewChannel = categoryChannels.firstOrNull()
+        }
+    }
+
+    fun selectChannel(channel: PlaylistItem) {
+        previewChannel = channel
+        val key = channelKey(channel)
+        val updatedRecent = (listOf(key) + recentIds.filterNot { it == key }).take(20)
+        recentIds = updatedRecent
+        favoritesStore.edit().putString("recent_ids", updatedRecent.joinToString("\u001F")).apply()
     }
 
     PremiumBackground {
@@ -549,8 +566,8 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
             val landscape = maxWidth > maxHeight
             val sidePadding = if (landscape) 34.dp else 20.dp
             Column(
-                Modifier.fillMaxSize().padding(horizontal = sidePadding, vertical = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                Modifier.fillMaxSize().padding(horizontal = sidePadding, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
@@ -571,12 +588,18 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                     }
                 }
 
+                LiveChannelPreview(
+                    channel = previewChannel,
+                    modifier = if (landscape) Modifier.fillMaxWidth().height(150.dp)
+                    else Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                )
+
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
                     modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
-                    shape = RoundedCornerShape(18.dp),
+                    shape = RoundedCornerShape(15.dp),
                     leadingIcon = { Icon(Icons.Default.Search, null) },
                     trailingIcon = {
                         if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, "Clear search") }
@@ -584,87 +607,195 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                     placeholder = { Text("Search channels") }
                 )
 
-                OutlinedTextField(
-                    value = categoryQuery,
-                    onValueChange = { categoryQuery = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    shape = RoundedCornerShape(18.dp),
-                    leadingIcon = { Icon(Icons.Default.Category, null) },
-                    trailingIcon = {
-                        if (categoryQuery.isNotEmpty()) IconButton(onClick = { categoryQuery = "" }) {
-                            Icon(Icons.Default.Close, "Clear category search")
-                        }
-                    },
-                    placeholder = { Text("Search categories") }
-                )
-
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    if (categoryQuery.isBlank()) {
-                        item {
-                            FilterChip(
-                                selected = selectedCategory == recentlyWatched,
-                                onClick = { selectedCategory = recentlyWatched },
-                                label = { Text(recentlyWatched) },
-                                leadingIcon = { Icon(Icons.Default.History, null, Modifier.size(17.dp)) }
-                            )
-                        }
-                        item {
-                            FilterChip(
-                                selected = selectedCategory == favorites,
-                                onClick = { selectedCategory = favorites },
-                                label = { Text(favorites) },
-                                leadingIcon = { Icon(Icons.Default.Star, null, Modifier.size(17.dp)) }
-                            )
-                        }
-                    }
-                    items(visibleCategories) { category ->
-                        FilterChip(
-                            selected = selectedCategory == category,
-                            onClick = { selectedCategory = category },
-                            label = { Text(category, maxLines = 1) }
+                Row(Modifier.fillMaxWidth().weight(1f), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(Modifier.width(if (landscape) 180.dp else 112.dp)) {
+                        OutlinedTextField(
+                            value = categoryQuery,
+                            onValueChange = { categoryQuery = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true,
+                            shape = RoundedCornerShape(14.dp),
+                            leadingIcon = { Icon(Icons.Default.Search, null, Modifier.size(18.dp)) },
+                            trailingIcon = {
+                                if (categoryQuery.isNotEmpty()) IconButton(onClick = { categoryQuery = "" }) {
+                                    Icon(Icons.Default.Close, "Clear category search", Modifier.size(17.dp))
+                                }
+                            },
+                            placeholder = { Text("Categories", maxLines = 1, fontSize = 12.sp) }
                         )
-                    }
-                }
-
-                when {
-                    channels.isEmpty() -> EmptyLiveState("No live channels were found in this playlist.")
-                    filtered.isEmpty() -> EmptyLiveState(
-                        when {
-                            query.isNotBlank() -> "No channels match your search."
-                            selectedCategory == recentlyWatched -> "Channels you watch will appear here."
-                            selectedCategory == favorites -> "Star channels to add them to Favorites."
-                            else -> "No channels are available in this category."
+                        Spacer(Modifier.height(8.dp))
+                        LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                            if (categoryQuery.isBlank()) {
+                                item {
+                                    CategoryRailItem(recentlyWatched, Icons.Default.History, selectedCategory == recentlyWatched) {
+                                        selectedCategory = recentlyWatched
+                                    }
+                                }
+                                item {
+                                    CategoryRailItem(favorites, Icons.Default.Star, selectedCategory == favorites) {
+                                        selectedCategory = favorites
+                                    }
+                                }
+                            }
+                            items(visibleCategories) { category ->
+                                CategoryRailItem(category, null, selectedCategory == category) {
+                                    selectedCategory = category
+                                }
+                            }
                         }
-                    )
-                    else -> LazyColumn(
-                        Modifier.weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(10.dp),
-                        contentPadding = PaddingValues(bottom = 18.dp)
-                    ) {
-                        itemsIndexed(
-                            items = filtered,
-                            key = { index, item -> "${item.channelId ?: item.name}-$index" }
-                        ) { _, channel ->
-                            val favoriteKey = channelKey(channel)
-                            ChannelRow(
-                                channel = channel,
-                                favorite = favoriteKey in favoriteIds,
-                                onFavorite = {
-                                    val updated = if (favoriteKey in favoriteIds) favoriteIds - favoriteKey else favoriteIds + favoriteKey
-                                    favoriteIds = updated
-                                    favoritesStore.edit().putStringSet("ids", updated).apply()
-                                },
-                                onClick = {
-                                    val updatedRecent = (listOf(favoriteKey) + recentIds.filterNot { it == favoriteKey }).take(20)
-                                    recentIds = updatedRecent
-                                    favoritesStore.edit().putString("recent_ids", updatedRecent.joinToString("\u001F")).apply()
-                                    onMessage("${channel.name} selected — playback is next")
+                    }
+
+                    when {
+                        channels.isEmpty() -> Column(Modifier.weight(1f)) {
+                            EmptyLiveState("No live channels were found in this playlist.")
+                        }
+                        filtered.isEmpty() -> Column(Modifier.weight(1f)) {
+                            EmptyLiveState(
+                                when {
+                                    query.isNotBlank() -> "No channels match your search."
+                                    selectedCategory == recentlyWatched -> "Watched channels appear here."
+                                    selectedCategory == favorites -> "Star channels to save them."
+                                    else -> "No channels in this category."
                                 }
                             )
                         }
+                        else -> LazyColumn(
+                            Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(7.dp),
+                            contentPadding = PaddingValues(bottom = 16.dp)
+                        ) {
+                            itemsIndexed(filtered, key = { index, item -> "${item.channelId ?: item.name}-$index" }) { _, channel ->
+                                val favoriteKey = channelKey(channel)
+                                CompactChannelRow(
+                                    channel = channel,
+                                    selected = channel == previewChannel,
+                                    favorite = favoriteKey in favoriteIds,
+                                    onFavorite = {
+                                        val updated = if (favoriteKey in favoriteIds) favoriteIds - favoriteKey else favoriteIds + favoriteKey
+                                        favoriteIds = updated
+                                        favoritesStore.edit().putStringSet("ids", updated).apply()
+                                    },
+                                    onClick = { selectChannel(channel) }
+                                )
+                            }
+                        }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val player = remember {
+        val dataSourceFactory = DefaultHttpDataSource.Factory()
+            .setUserAgent("VLC/3.0.20 LibVLC/3.0.20")
+            .setAllowCrossProtocolRedirects(true)
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory))
+            .build()
+            .apply { playWhenReady = true }
+    }
+
+    LaunchedEffect(channel?.streamUrl) {
+        if (channel == null) {
+            player.clearMediaItems()
+        } else {
+            player.setMediaItem(MediaItem.fromUri(channel.streamUrl))
+            player.prepare()
+            player.play()
+        }
+    }
+    DisposableEffect(player) { onDispose { player.release() } }
+
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = Color.Black,
+        shadowElevation = 8.dp
+    ) {
+        Box(Modifier.fillMaxSize()) {
+            if (channel == null) {
+                Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(Icons.Default.LiveTv, null, tint = Cyan, modifier = Modifier.size(34.dp))
+                    Spacer(Modifier.height(7.dp))
+                    Text("Choose a channel", color = Color.White.copy(alpha = .75f))
+                }
+            } else {
+                AndroidView(
+                    factory = { PlayerView(it).apply { useController = true; this.player = player } },
+                    update = { it.player = player },
+                    modifier = Modifier.fillMaxSize()
+                )
+                Surface(
+                    modifier = Modifier.align(Alignment.BottomStart).padding(10.dp),
+                    color = Color.Black.copy(alpha = .68f),
+                    shape = RoundedCornerShape(9.dp)
+                ) {
+                    Text(channel.name, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryRailItem(label: String, icon: ImageVector?, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable(onClick = onClick),
+        color = if (selected) BrandBlue.copy(alpha = .9f) else MaterialTheme.colorScheme.surface.copy(alpha = .82f),
+        border = BorderStroke(1.dp, if (selected) Cyan.copy(alpha = .55f) else Color.White.copy(alpha = .08f)),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Row(Modifier.padding(horizontal = 9.dp, vertical = 11.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (icon != null) {
+                Icon(icon, null, Modifier.size(16.dp), tint = if (selected) Color.White else Cyan)
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(label, maxLines = 2, fontSize = 12.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
+        }
+    }
+}
+
+@Composable
+private fun CompactChannelRow(
+    channel: PlaylistItem,
+    selected: Boolean,
+    favorite: Boolean,
+    onFavorite: () -> Unit,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick),
+        color = if (selected) BrandBlue.copy(alpha = .34f) else MaterialTheme.colorScheme.surface.copy(alpha = .9f),
+        border = BorderStroke(1.dp, if (selected) Cyan.copy(alpha = .55f) else Color.Transparent),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(42.dp).clip(RoundedCornerShape(10.dp)).background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.LiveTv, null, tint = Cyan.copy(alpha = .65f), modifier = Modifier.size(22.dp))
+                if (!channel.logoUrl.isNullOrBlank()) {
+                    AsyncImage(channel.logoUrl, null, Modifier.fillMaxSize().padding(4.dp), contentScale = ContentScale.Fit)
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(channel.name, fontWeight = FontWeight.SemiBold, fontSize = 13.sp, maxLines = 2)
+                Text(channel.group, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, maxLines = 1)
+            }
+            IconButton(onClick = onFavorite, modifier = Modifier.size(34.dp)) {
+                Icon(
+                    if (favorite) Icons.Default.Star else Icons.Default.StarBorder,
+                    if (favorite) "Remove favorite" else "Add favorite",
+                    tint = if (favorite) Orange else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
     }
