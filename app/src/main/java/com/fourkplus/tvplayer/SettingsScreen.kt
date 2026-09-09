@@ -22,6 +22,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fourkplus.tvplayer.data.LoadedPlaylist
+import com.fourkplus.tvplayer.data.MediaKind
 import com.fourkplus.tvplayer.data.PlaylistInput
 import com.fourkplus.tvplayer.ui.theme.*
 
@@ -52,13 +53,24 @@ internal fun SettingsScreen(
     var playerEngine by remember { mutableStateOf(playback.getString("player_engine", "default") ?: "default") }
     var pinHash by remember { mutableStateOf(parental.getString("pin_hash", null)) }
     var parentalUnlocked by remember { mutableStateOf(pinHash == null) }
-    var hiddenCategories by remember {
-        mutableStateOf(parental.getStringSet("hidden_categories", emptySet()).orEmpty().toSet())
+    var hiddenLive by remember {
+        mutableStateOf(parental.getStringSet("hidden_live_categories", emptySet()).orEmpty().toSet())
     }
+    var hiddenMovies by remember {
+        mutableStateOf(parental.getStringSet("hidden_movie_categories", emptySet()).orEmpty().toSet())
+    }
+    var hiddenSeries by remember {
+        mutableStateOf(parental.getStringSet("hidden_series_categories", emptySet()).orEmpty().toSet())
+    }
+    var visibilitySection by remember { mutableStateOf(MediaKind.LIVE) }
     var showPinDialog by remember { mutableStateOf(false) }
     var pinMode by remember { mutableStateOf(if (pinHash == null) "set" else "unlock") }
     var showRemoveConfirm by remember { mutableStateOf(false) }
-    val allCategories = remember(playlist) { playlist?.items?.map { it.group }?.distinct()?.sorted().orEmpty() }
+    val categoriesByKind = remember(playlist) {
+        MediaKind.entries.associateWith { kind ->
+            playlist?.items?.filter { it.kind == kind }?.map { it.group }?.distinct()?.sorted().orEmpty()
+        }
+    }
 
     if (showPinDialog) {
         PinDialog(
@@ -270,27 +282,71 @@ internal fun SettingsScreen(
                             showPinDialog = true
                         })
                     } else {
-                        Text("Hidden categories", fontWeight = FontWeight.Bold)
+                        Text("Category visibility", fontWeight = FontWeight.Bold)
                         Text(
-                            "Hidden categories are removed from Live TV, Movies, and Series.",
+                            "Uncheck a category to hide it. Hidden categories can always be restored here.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall
                         )
-                        allCategories.forEach { category ->
+                        Row(
+                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf(
+                                MediaKind.LIVE to "Live TV",
+                                MediaKind.MOVIE to "Movies",
+                                MediaKind.SERIES to "Series"
+                            ).forEach { (kind, label) ->
+                                FilterChip(
+                                    selected = visibilitySection == kind,
+                                    onClick = { visibilitySection = kind },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
+                        val activeHidden = when (visibilitySection) {
+                            MediaKind.LIVE -> hiddenLive
+                            MediaKind.MOVIE -> hiddenMovies
+                            MediaKind.SERIES -> hiddenSeries
+                        }
+                        val activeKey = when (visibilitySection) {
+                            MediaKind.LIVE -> "hidden_live_categories"
+                            MediaKind.MOVIE -> "hidden_movie_categories"
+                            MediaKind.SERIES -> "hidden_series_categories"
+                        }
+                        categoriesByKind[visibilitySection].orEmpty().forEach { category ->
                             Row(
                                 Modifier.fillMaxWidth().padding(vertical = 3.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Checkbox(
-                                    checked = category in hiddenCategories,
-                                    onCheckedChange = { hidden ->
-                                        val updated = if (hidden) hiddenCategories + category else hiddenCategories - category
-                                        hiddenCategories = updated
-                                        parental.edit().putStringSet("hidden_categories", updated).apply()
+                                    checked = category !in activeHidden,
+                                    onCheckedChange = { visible ->
+                                        val updated = if (visible) activeHidden - category else activeHidden + category
+                                        when (visibilitySection) {
+                                            MediaKind.LIVE -> hiddenLive = updated
+                                            MediaKind.MOVIE -> hiddenMovies = updated
+                                            MediaKind.SERIES -> hiddenSeries = updated
+                                        }
+                                        parental.edit().putStringSet(activeKey, updated).apply()
                                     }
                                 )
                                 Text(category, Modifier.weight(1f))
                             }
+                        }
+                        if (activeHidden.isNotEmpty()) {
+                            TextButton(
+                                onClick = {
+                                    when (visibilitySection) {
+                                        MediaKind.LIVE -> hiddenLive = emptySet()
+                                        MediaKind.MOVIE -> hiddenMovies = emptySet()
+                                        MediaKind.SERIES -> hiddenSeries = emptySet()
+                                    }
+                                    parental.edit().remove(activeKey).apply()
+                                    onMessage("All categories are visible")
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Show all categories") }
                         }
                         OutlinedButton(
                             onClick = { parentalUnlocked = false },
@@ -298,10 +354,18 @@ internal fun SettingsScreen(
                         ) { Icon(Icons.Default.Lock, null); Spacer(Modifier.width(7.dp)); Text("Lock controls") }
                         TextButton(
                             onClick = {
-                                parental.edit().remove("pin_hash").remove("hidden_categories").apply()
+                                parental.edit()
+                                    .remove("pin_hash")
+                                    .remove("hidden_categories")
+                                    .remove("hidden_live_categories")
+                                    .remove("hidden_movie_categories")
+                                    .remove("hidden_series_categories")
+                                    .apply()
                                 pinHash = null
                                 parentalUnlocked = true
-                                hiddenCategories = emptySet()
+                                hiddenLive = emptySet()
+                                hiddenMovies = emptySet()
+                                hiddenSeries = emptySet()
                                 onMessage("Parental controls removed")
                             },
                             modifier = Modifier.fillMaxWidth()
@@ -312,7 +376,7 @@ internal fun SettingsScreen(
 
             item {
                 Text(
-                    "4K Plus TV Player • v0.10.0",
+                    "4K Plus TV Player • v0.10.4",
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
