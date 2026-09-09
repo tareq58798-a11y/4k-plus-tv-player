@@ -9,6 +9,7 @@
 - The next functional milestone adds real M3U/provider connection testing, playlist parsing, encrypted source storage, loading/error handling, and real content counts on Home.
 - Version 0.2.1 improves compatibility after a real test returned `Connection reset`: protocol-aware HTTP/HTTPS fallback, VLC-compatible request headers, clearer connection errors, and a working clipboard paste action.
 - Version 0.3.0 replaces the provider-login-to-M3U shortcut with direct Xtream Codes API authentication and separate live, movie, series, and category loading. It also corrects HTTPS on port 80 and retries common compatible request signatures.
+- Version 0.4.0 adds the first real content browser for Live TV: lazy large-list rendering, category chips, search, channel logos, persistent favorites, empty states, and corrected Series count wording.
 
 ## Product direction
 
@@ -42,4 +43,4 @@ The current interface is clean but feels too plain. Keep it minimal and easy to 
 
 ## Next step
 
-Build and test version 0.2.0 through GitHub Actions. Verify a real M3U URL and provider login, confirm loading/errors and Home counts, then add content browsing screens and Media3 playback after the ingestion path is stable. Visual refinements remain intentionally deferred.
+Build and test version 0.4.0 through GitHub Actions. Verify Live TV category filtering, search, logos, scrolling performance, and favorites with a real large account. Then add Media3 live playback before building the Movies and Series browsers. Visual refinements remain intentionally deferred.

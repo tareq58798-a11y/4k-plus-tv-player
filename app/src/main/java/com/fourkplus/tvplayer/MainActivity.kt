@@ -15,6 +15,10 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -46,11 +50,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fourkplus.tvplayer.ui.theme.*
 import com.fourkplus.tvplayer.data.LoadedPlaylist
+import com.fourkplus.tvplayer.data.MediaKind
+import com.fourkplus.tvplayer.data.PlaylistItem
 import com.fourkplus.tvplayer.data.PlaylistInput
 import com.fourkplus.tvplayer.data.PlaylistKind
 import com.fourkplus.tvplayer.data.PlaylistRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import coil.compose.AsyncImage
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -60,7 +67,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { ACTIVATION, MANUAL, HOME }
+private enum class Screen { ACTIVATION, MANUAL, HOME, LIVE_TV }
 private enum class ThemeChoice { SYSTEM, LIGHT, DARK }
 
 @Composable
@@ -106,6 +113,12 @@ private fun App() {
                 Screen.HOME -> HomeScreen(
                     playlist = loadedPlaylist,
                     onManage = { screen = Screen.ACTIVATION },
+                    onOpenLive = { screen = Screen.LIVE_TV },
+                    onMessage = message
+                )
+                Screen.LIVE_TV -> LiveTvScreen(
+                    playlist = loadedPlaylist,
+                    onBack = { screen = Screen.HOME },
                     onMessage = message
                 )
             }
@@ -435,7 +448,12 @@ private fun ManualPlaylistScreen(
 }
 
 @Composable
-private fun HomeScreen(playlist: LoadedPlaylist?, onManage: () -> Unit, onMessage: (String) -> Unit) {
+private fun HomeScreen(
+    playlist: LoadedPlaylist?,
+    onManage: () -> Unit,
+    onOpenLive: () -> Unit,
+    onMessage: (String) -> Unit
+) {
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
     PremiumBackground {
@@ -462,15 +480,15 @@ private fun HomeScreen(playlist: LoadedPlaylist?, onManage: () -> Unit, onMessag
             ) { ContinueCard { onMessage("Nothing to continue yet") } }
             if (landscape) {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.weight(1f)) { onMessage("Live TV browsing is the next milestone") }
+                    HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.weight(1f), onOpenLive)
                     HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f)) { onMessage("Movie browsing is the next milestone") }
-                    HomeTile("Series", playlist?.let { "${it.seriesCount} episodes" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series browsing is the next milestone") }
+                    HomeTile("Series", playlist?.let { "${it.seriesCount} series" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series browsing is the next milestone") }
                 }
             } else {
-                HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.fillMaxWidth()) { onMessage("Live TV browsing is the next milestone") }
+                HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.fillMaxWidth(), onOpenLive)
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f)) { onMessage("Movie browsing is the next milestone") }
-                    HomeTile("Series", playlist?.let { "${it.seriesCount} episodes" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series browsing is the next milestone") }
+                    HomeTile("Series", playlist?.let { "${it.seriesCount} series" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series browsing is the next milestone") }
                 }
             }
             Text("Quick access", fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -484,6 +502,166 @@ private fun HomeScreen(playlist: LoadedPlaylist?, onManage: () -> Unit, onMessag
             }
         }
     }
+    }
+}
+
+@Composable
+private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessage: (String) -> Unit) {
+    val channels = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.LIVE }.orEmpty() }
+    val categories = remember(channels) { channels.map { it.group }.distinct().sorted() }
+    var selectedCategory by remember { mutableStateOf("All") }
+    var query by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val favoritesStore = remember { context.getSharedPreferences("favorite_channels", android.content.Context.MODE_PRIVATE) }
+    var favoriteIds by remember { mutableStateOf(favoritesStore.getStringSet("ids", emptySet()).orEmpty().toSet()) }
+    val filtered = remember(channels, selectedCategory, query) {
+        channels.filter { channel ->
+            (selectedCategory == "All" || channel.group == selectedCategory) &&
+                (query.isBlank() || channel.name.contains(query.trim(), ignoreCase = true))
+        }
+    }
+
+    PremiumBackground {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val landscape = maxWidth > maxHeight
+            val sidePadding = if (landscape) 34.dp else 20.dp
+            Column(
+                Modifier.fillMaxSize().padding(horizontal = sidePadding, vertical = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
+                    Column(Modifier.weight(1f)) {
+                        Text("Live TV", fontSize = 28.sp, fontWeight = FontWeight.Black)
+                        Text("${filtered.size} channels", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = Cyan.copy(alpha = .13f),
+                        border = BorderStroke(1.dp, Cyan.copy(alpha = .28f))
+                    ) {
+                        Row(Modifier.padding(horizontal = 11.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(Cyan))
+                            Spacer(Modifier.width(7.dp))
+                            Text("LIVE", color = Cyan, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(18.dp),
+                    leadingIcon = { Icon(Icons.Default.Search, null) },
+                    trailingIcon = {
+                        if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Close, "Clear search") }
+                    },
+                    placeholder = { Text("Search channels") }
+                )
+
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    item {
+                        FilterChip(
+                            selected = selectedCategory == "All",
+                            onClick = { selectedCategory = "All" },
+                            label = { Text("All") },
+                            leadingIcon = { Icon(Icons.Default.GridView, null, Modifier.size(17.dp)) }
+                        )
+                    }
+                    items(categories) { category ->
+                        FilterChip(
+                            selected = selectedCategory == category,
+                            onClick = { selectedCategory = category },
+                            label = { Text(category, maxLines = 1) }
+                        )
+                    }
+                }
+
+                when {
+                    channels.isEmpty() -> EmptyLiveState("No live channels were found in this playlist.")
+                    filtered.isEmpty() -> EmptyLiveState("No channels match your search and category.")
+                    else -> LazyColumn(
+                        Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        contentPadding = PaddingValues(bottom = 18.dp)
+                    ) {
+                        itemsIndexed(
+                            items = filtered,
+                            key = { index, item -> "${item.channelId ?: item.name}-$index" }
+                        ) { _, channel ->
+                            val favoriteKey = channel.channelId ?: "${channel.group}:${channel.name}"
+                            ChannelRow(
+                                channel = channel,
+                                favorite = favoriteKey in favoriteIds,
+                                onFavorite = {
+                                    val updated = if (favoriteKey in favoriteIds) favoriteIds - favoriteKey else favoriteIds + favoriteKey
+                                    favoriteIds = updated
+                                    favoritesStore.edit().putStringSet("ids", updated).apply()
+                                },
+                                onClick = { onMessage("${channel.name} selected — playback is next") }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ChannelRow(channel: PlaylistItem, favorite: Boolean, onFavorite: () -> Unit, onClick: () -> Unit) {
+    ElevatedCard(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .96f)),
+        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 4.dp)
+    ) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(width = 64.dp, height = 52.dp).clip(RoundedCornerShape(13.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.LiveTv, null, tint = Cyan.copy(alpha = .7f))
+                if (!channel.logoUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = channel.logoUrl,
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxSize().padding(6.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.width(13.dp))
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(channel.name, fontWeight = FontWeight.SemiBold, maxLines = 2)
+                Text(channel.group, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+            IconButton(onClick = onFavorite) {
+                Icon(
+                    if (favorite) Icons.Default.Star else Icons.Default.StarBorder,
+                    if (favorite) "Remove favorite" else "Add favorite",
+                    tint = if (favorite) Orange else MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.EmptyLiveState(message: String) {
+    Column(
+        Modifier.fillMaxWidth().weight(1f),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center
+    ) {
+        AccentIcon(Icons.Default.LiveTv, Cyan)
+        Spacer(Modifier.height(12.dp))
+        Text(message, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
