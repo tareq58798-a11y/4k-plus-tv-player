@@ -1008,9 +1008,13 @@ private fun MoviePlayer(
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(movie) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
-    val player = remember(movie.streamUrl) {
+    val player = remember(movie.streamUrl, skipSeconds) {
         val factory = DefaultHttpDataSource.Factory().setUserAgent("VLC/3.0.20 LibVLC/3.0.20").setAllowCrossProtocolRedirects(true)
-        ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(factory)).build()
+        ExoPlayer.Builder(context)
+            .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(factory))
+            .setSeekBackIncrementMs(skipSeconds * 1_000L)
+            .setSeekForwardIncrementMs(skipSeconds * 1_000L)
+            .build()
     }
     LaunchedEffect(player, movie.streamUrl, externalSubtitle) {
         error = null
@@ -1027,6 +1031,8 @@ private fun MoviePlayer(
     LaunchedEffect(player, subtitlesEnabled) {
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
+            .setPreferredTextLanguages("ar", "en")
+            .setSelectUndeterminedTextLanguage(subtitlesEnabled)
             .build()
     }
     DisposableEffect(player) {
@@ -1049,7 +1055,6 @@ private fun MoviePlayer(
             )
             PlaybackOptionsOverlay(
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-                player = player,
                 fullscreen = fullscreen,
                 onFullscreenChange = { fullscreen = it },
                 subtitlesEnabled = subtitlesEnabled,
@@ -1427,7 +1432,6 @@ private fun ChannelPoster(
 @Composable
 private fun PlaybackOptionsOverlay(
     modifier: Modifier = Modifier,
-    player: Player,
     fullscreen: Boolean,
     onFullscreenChange: (Boolean) -> Unit,
     subtitlesEnabled: Boolean,
@@ -1453,13 +1457,6 @@ private fun PlaybackOptionsOverlay(
         shape = RoundedCornerShape(13.dp)
     ) {
         Row(Modifier.padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { player.seekTo((player.currentPosition - skipSeconds * 1_000L).coerceAtLeast(0L)) }) {
-                Text("−${skipSeconds}s", color = Color.White, fontSize = 11.sp)
-            }
-            TextButton(onClick = {
-                val destination = player.currentPosition + skipSeconds * 1_000L
-                player.seekTo(if (player.duration > 0L) destination.coerceAtMost(player.duration) else destination)
-            }) { Text("+${skipSeconds}s", color = Color.White, fontSize = 11.sp) }
             Box {
                 IconButton(onClick = { subtitleMenu = true }, modifier = Modifier.size(38.dp)) {
                     Icon(Icons.Default.Subtitles, "Subtitles", tint = if (subtitlesEnabled) Cyan else Color.White)
@@ -1529,12 +1526,14 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(channel?.streamUrl) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
-    val player = remember {
+    val player = remember(skipSeconds) {
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.20 LibVLC/3.0.20")
             .setAllowCrossProtocolRedirects(true)
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory))
+            .setSeekBackIncrementMs(skipSeconds * 1_000L)
+            .setSeekForwardIncrementMs(skipSeconds * 1_000L)
             .build()
             .apply { playWhenReady = true }
     }
@@ -1557,6 +1556,8 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
     LaunchedEffect(player, subtitlesEnabled) {
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
+            .setPreferredTextLanguages("ar", "en")
+            .setSelectUndeterminedTextLanguage(subtitlesEnabled)
             .build()
     }
     DisposableEffect(player) {
