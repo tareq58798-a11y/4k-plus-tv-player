@@ -614,8 +614,98 @@ private fun HomeScreen(
                 AssistChip(onClick = { onMessage("No viewing history yet") }, label = { Text("Recently watched") }, leadingIcon = { Icon(Icons.Default.History, null) })
                 AssistChip(onClick = onManage, label = { Text("Playlists") }, leadingIcon = { Icon(Icons.Default.PlaylistPlay, null) })
             }
+            HomeDeviceInfoBar(playlist = playlist)
         }
     }
+    }
+}
+
+@Composable
+private fun HomeDeviceInfoBar(playlist: LoadedPlaylist?) {
+    val context = LocalContext.current
+    val deviceIdentity = remember {
+        val androidId = android.provider.Settings.Secure.getString(
+            context.contentResolver,
+            android.provider.Settings.Secure.ANDROID_ID
+        ).orEmpty().ifBlank { "4k-plus-tv-player" }
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(androidId.toByteArray(Charsets.UTF_8))
+    }
+    val appMac = remember(deviceIdentity) {
+        deviceIdentity.take(6).joinToString(":") { byte -> "%02X".format(byte.toInt() and 0xFF) }
+    }
+    val deviceKey = remember(deviceIdentity) {
+        val value = deviceIdentity.take(4).fold(0L) { result, byte ->
+            (result shl 8) or (byte.toLong() and 0xFF)
+        }
+        "%06d".format(value % 1_000_000L)
+    }
+    val expiryText = remember(playlist?.expiryEpochSeconds) {
+        playlist?.expiryEpochSeconds?.let { epochSeconds ->
+            runCatching {
+                val date = java.time.Instant.ofEpochSecond(epochSeconds)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate()
+                val days = java.time.temporal.ChronoUnit.DAYS.between(
+                    java.time.LocalDate.now(),
+                    date
+                )
+                when {
+                    days > 0 -> "${date} (${days} days)"
+                    days == 0L -> "${date} (today)"
+                    else -> "${date} (expired)"
+                }
+            }.getOrNull()
+        } ?: "Not provided"
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
+        border = BorderStroke(1.dp, Cyan.copy(alpha = 0.32f))
+    ) {
+        BoxWithConstraints {
+            val wide = maxWidth >= 650.dp
+            if (wide) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    HomeInfoValue("App MAC", appMac, Modifier.weight(1f))
+                    VerticalDivider(Modifier.height(34.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                    HomeInfoValue("Device key", deviceKey, Modifier.weight(1f))
+                    VerticalDivider(Modifier.height(34.dp), color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                    HomeInfoValue("Playlist expires", expiryText, Modifier.weight(1.25f))
+                }
+            } else {
+                Column(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    HomeInfoValue("App MAC", appMac)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                    HomeInfoValue("Device key", deviceKey)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
+                    HomeInfoValue("Playlist expires", expiryText)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomeInfoValue(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(modifier.padding(horizontal = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            value,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Bold,
+            textAlign = TextAlign.Center,
+            maxLines = 2
+        )
     }
 }
 
