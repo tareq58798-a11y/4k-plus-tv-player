@@ -12,6 +12,7 @@
 - Version 0.4.0 adds the first real content browser for Live TV: lazy large-list rendering, category chips, search, channel logos, persistent favorites, empty states, and corrected Series count wording.
 - Version 0.4.1 removes All Channels, puts Recently watched and Favorites first, adds category search, records the 20 most recently selected channels in order, and changes the LIVE status dot to red.
 - Version 0.4.2 opens Live TV on the provider's first category and makes channel and category searches global regardless of the selected category.
+- Version 0.4.3 temporarily hides Recently watched and Favorites during category search so matching server categories appear first, then restores them when search is cleared.
 
 ## Product direction
 

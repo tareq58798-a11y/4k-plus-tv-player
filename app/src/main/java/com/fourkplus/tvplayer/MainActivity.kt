@@ -600,21 +600,23 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                 )
 
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                    item {
-                        FilterChip(
-                            selected = selectedCategory == recentlyWatched,
-                            onClick = { selectedCategory = recentlyWatched },
-                            label = { Text(recentlyWatched) },
-                            leadingIcon = { Icon(Icons.Default.History, null, Modifier.size(17.dp)) }
-                        )
-                    }
-                    item {
-                        FilterChip(
-                            selected = selectedCategory == favorites,
-                            onClick = { selectedCategory = favorites },
-                            label = { Text(favorites) },
-                            leadingIcon = { Icon(Icons.Default.Star, null, Modifier.size(17.dp)) }
-                        )
+                    if (categoryQuery.isBlank()) {
+                        item {
+                            FilterChip(
+                                selected = selectedCategory == recentlyWatched,
+                                onClick = { selectedCategory = recentlyWatched },
+                                label = { Text(recentlyWatched) },
+                                leadingIcon = { Icon(Icons.Default.History, null, Modifier.size(17.dp)) }
+                            )
+                        }
+                        item {
+                            FilterChip(
+                                selected = selectedCategory == favorites,
+                                onClick = { selectedCategory = favorites },
+                                label = { Text(favorites) },
+                                leadingIcon = { Icon(Icons.Default.Star, null, Modifier.size(17.dp)) }
+                            )
+                        }
                     }
                     items(visibleCategories) { category ->
                         FilterChip(
