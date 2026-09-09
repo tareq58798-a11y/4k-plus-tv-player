@@ -48,3 +48,30 @@ data class MovieDetailsInfo(
     val posterUrl: String? = null,
     val trailerUrl: String? = null
 )
+
+
+data class SeriesEpisode(
+    val id: String,
+    val seasonNumber: Int,
+    val episodeNumber: Int,
+    val title: String,
+    val streamUrl: String,
+    val thumbnailUrl: String? = null,
+    val duration: String? = null,
+    val description: String? = null
+)
+
+data class SeriesDetailsInfo(
+    val originalTitle: String? = null,
+    val description: String? = null,
+    val year: String? = null,
+    val rating: String? = null,
+    val genre: String? = null,
+    val cast: String? = null,
+    val director: String? = null,
+    val backdropUrl: String? = null,
+    val posterUrl: String? = null,
+    val episodes: List<SeriesEpisode> = emptyList()
+) {
+    val seasons: List<Int> get() = episodes.map { it.seasonNumber }.distinct().sorted()
+}
