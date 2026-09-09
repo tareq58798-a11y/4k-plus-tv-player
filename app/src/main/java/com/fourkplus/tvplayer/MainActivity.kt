@@ -681,14 +681,26 @@ private fun HomeDeviceInfoBar(playlist: LoadedPlaylist?) {
                 }
             } else {
                 Column(
-                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 11.dp),
+                    verticalArrangement = Arrangement.spacedBy(9.dp)
                 ) {
-                    HomeInfoValue("App MAC", appMac)
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        HomeInfoValue("App MAC", appMac, Modifier.weight(1.45f))
+                        VerticalDivider(
+                            Modifier.height(38.dp),
+                            color = MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)
+                        )
+                        HomeInfoValue("Device key", deviceKey, Modifier.weight(1f))
+                    }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
-                    HomeInfoValue("Device key", deviceKey)
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f))
-                    HomeInfoValue("Playlist expires", expiryText)
+                    HomeInfoValue(
+                        "Playlist expires",
+                        expiryText,
+                        Modifier.fillMaxWidth()
+                    )
                 }
             }
         }
