@@ -14,6 +14,7 @@
 - Version 0.4.2 opens Live TV on the provider's first category and makes channel and category searches global regardless of the selected category.
 - Version 0.4.3 temporarily hides Recently watched and Favorites during category search so matching server categories appear first, then restores them when search is cleared.
 - Version 0.5.0 redesigns Live TV for portrait browsing with a real Media3 stream preview, a vertical category rail on the left, and a compact channel list on the right. Landscape uses a shorter preview to preserve browsing space.
+- Version 0.6.0 replaces the rail layout with a portrait-first streaming layout: auto-playing preview, category search, horizontal channel shelves with See all, a searchable category grid, and a player view with Recently watched below it.
 
 ## Product direction
 
