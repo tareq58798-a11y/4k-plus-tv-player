@@ -717,13 +717,15 @@ private fun MoviesScreen(
     loadDetails: suspend (PlaylistItem) -> Result<MovieDetailsInfo>,
     onBack: () -> Unit
 ) {
-    val parental = LocalContext.current.getSharedPreferences("parental_settings", android.content.Context.MODE_PRIVATE)
-    val hiddenCategories = parental.getStringSet("hidden_categories", emptySet()).orEmpty()
+    val context = LocalContext.current
+    val parental = remember { context.getSharedPreferences("parental_settings", android.content.Context.MODE_PRIVATE) }
+    var hiddenCategories by remember {
+        mutableStateOf(parental.getStringSet("hidden_movie_categories", emptySet()).orEmpty().toSet())
+    }
     val movies = remember(playlist, hiddenCategories) {
         playlist?.items?.filter { it.kind == MediaKind.MOVIE && it.group !in hiddenCategories }.orEmpty()
     }
     val categories = remember(movies) { movies.map { it.group }.distinct() }
-    val context = LocalContext.current
     val store = remember { context.getSharedPreferences("movie_library", android.content.Context.MODE_PRIVATE) }
     var view by remember { mutableStateOf(MovieView.BROWSE) }
     var selectedCategory by remember { mutableStateOf(categories.firstOrNull().orEmpty()) }
@@ -817,6 +819,18 @@ private fun MoviesScreen(
                             lineHeight = if (landscape) 27.sp else 26.sp
                         )
                         if (view == MovieView.BROWSE) Text("${movies.size} movies", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (view == MovieView.CATEGORY && selectedCategory !in setOf("Continue watching", "Recently watched", "Favorites")) {
+                        TextButton(onClick = {
+                            hiddenCategories = hiddenCategories + selectedCategory
+                            parental.edit().putStringSet("hidden_movie_categories", hiddenCategories).apply()
+                            search = ""
+                            view = MovieView.BROWSE
+                        }) {
+                            Icon(Icons.Default.VisibilityOff, null)
+                            Spacer(Modifier.width(5.dp))
+                            Text("Hide")
+                        }
                     }
                     if (view == MovieView.DETAILS && selectedMovie != null) {
                         IconButton(onClick = { toggleFavorite(selectedMovie!!) }) {
@@ -1158,7 +1172,8 @@ internal fun MoviePlayer(
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
     val subtitleLanguages = settings.getString("subtitle_language", "ar,en").orEmpty()
         .split(',').map(String::trim).filter(String::isNotBlank)
-    val videoResizeMode = when (settings.getString("video_mode", "fit")) {
+    var videoMode by remember { mutableStateOf(settings.getString("video_mode", "fit") ?: "fit") }
+    val videoResizeMode = when (videoMode) {
         "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
         "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
         else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -1268,6 +1283,7 @@ internal fun MoviePlayer(
                     PlayerView(it).apply {
                         useController = true
                         resizeMode = videoResizeMode
+                        applyRequestedAspectRatio(this, videoMode)
                         this.player = player
                         installDoubleTapSeek(this, player, skipSeconds) { forward ->
                             seekFeedback = forward to System.nanoTime()
@@ -1276,6 +1292,8 @@ internal fun MoviePlayer(
                 },
                 update = {
                     it.player = player
+                    it.resizeMode = videoResizeMode
+                    applyRequestedAspectRatio(it, videoMode)
                     installDoubleTapSeek(it, player, skipSeconds) { forward ->
                         seekFeedback = forward to System.nanoTime()
                     }
@@ -1309,6 +1327,11 @@ internal fun MoviePlayer(
                 onSkipSecondsChange = {
                     skipSeconds = it
                     settings.edit().putInt("skip_seconds", it).apply()
+                },
+                videoMode = videoMode,
+                onVideoModeChange = {
+                    videoMode = it
+                    settings.edit().putString("video_mode", it).apply()
                 }
             )
             error?.let {
@@ -1347,8 +1370,11 @@ private enum class LiveView { BROWSE, CATEGORY, PLAYER }
 
 @Composable
 private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessage: (String) -> Unit) {
-    val parental = LocalContext.current.getSharedPreferences("parental_settings", android.content.Context.MODE_PRIVATE)
-    val hiddenCategories = parental.getStringSet("hidden_categories", emptySet()).orEmpty()
+    val context = LocalContext.current
+    val parental = remember { context.getSharedPreferences("parental_settings", android.content.Context.MODE_PRIVATE) }
+    var hiddenCategories by remember {
+        mutableStateOf(parental.getStringSet("hidden_live_categories", emptySet()).orEmpty().toSet())
+    }
     val channels = remember(playlist, hiddenCategories) {
         playlist?.items?.filter { it.kind == MediaKind.LIVE && it.group !in hiddenCategories }.orEmpty()
     }
@@ -1361,7 +1387,6 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
     var channelQuery by remember { mutableStateOf("") }
     var showRecentInPlayer by remember { mutableStateOf(false) }
     var previewChannel by remember(playlist) { mutableStateOf(channels.firstOrNull()) }
-    val context = LocalContext.current
     val store = remember { context.getSharedPreferences("favorite_channels", android.content.Context.MODE_PRIVATE) }
     var favoriteIds by remember { mutableStateOf(store.getStringSet("ids", emptySet()).orEmpty().toSet()) }
     var recentIds by remember {
@@ -1478,6 +1503,20 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                         }
                     }
                     LiveView.CATEGORY -> {
+                        if (selectedCategory !in setOf(recentlyWatched, favorites)) {
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                TextButton(onClick = {
+                                    hiddenCategories = hiddenCategories + selectedCategory
+                                    parental.edit().putStringSet("hidden_live_categories", hiddenCategories).apply()
+                                    channelQuery = ""
+                                    view = LiveView.BROWSE
+                                }) {
+                                    Icon(Icons.Default.VisibilityOff, null)
+                                    Spacer(Modifier.width(5.dp))
+                                    Text("Hide category")
+                                }
+                            }
+                        }
                         LiveChannelPreview(
                             channel = previewChannel,
                             modifier = if (landscape) Modifier.fillMaxWidth().height(150.dp)
@@ -1723,6 +1762,34 @@ private fun DoubleTapSeekFeedback(
     }
 }
 
+private fun applyRequestedAspectRatio(view: PlayerView, mode: String) {
+    val targetRatio = when (mode) {
+        "16:9" -> 16f / 9f
+        "4:3" -> 4f / 3f
+        "21:9" -> 21f / 9f
+        "1:1" -> 1f
+        else -> null
+    }
+    val surface = view.videoSurfaceView ?: return
+    if (targetRatio == null) {
+        surface.scaleX = 1f
+        surface.scaleY = 1f
+        return
+    }
+    view.post {
+        val width = view.width.toFloat().coerceAtLeast(1f)
+        val height = view.height.toFloat().coerceAtLeast(1f)
+        val containerRatio = width / height
+        if (targetRatio > containerRatio) {
+            surface.scaleX = 1f
+            surface.scaleY = containerRatio / targetRatio
+        } else {
+            surface.scaleX = targetRatio / containerRatio
+            surface.scaleY = 1f
+        }
+    }
+}
+
 private fun installDoubleTapSeek(
     view: PlayerView,
     player: Player,
@@ -1768,11 +1835,14 @@ private fun PlaybackOptionsOverlay(
     externalSubtitle: Uri?,
     onExternalSubtitleChange: (Uri?) -> Unit,
     skipSeconds: Int,
-    onSkipSecondsChange: (Int) -> Unit
+    onSkipSecondsChange: (Int) -> Unit,
+    videoMode: String,
+    onVideoModeChange: (String) -> Unit
 ) {
     val context = LocalContext.current
     var subtitleMenu by remember { mutableStateOf(false) }
     var skipMenu by remember { mutableStateOf(false) }
+    var sizeMenu by remember { mutableStateOf(false) }
     var muted by remember(player) { mutableStateOf(player.volume == 0f) }
     val subtitlePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -1839,6 +1909,28 @@ private fun PlaybackOptionsOverlay(
                             text = { Text("Skip $seconds seconds") },
                             leadingIcon = { if (seconds == skipSeconds) Icon(Icons.Default.Check, null) },
                             onClick = { onSkipSecondsChange(seconds); skipMenu = false }
+                        )
+                    }
+                }
+            }
+            Box {
+                IconButton(onClick = { sizeMenu = true }, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Default.AspectRatio, "Screen dimensions", tint = Cyan)
+                }
+                DropdownMenu(sizeMenu, onDismissRequest = { sizeMenu = false }) {
+                    listOf(
+                        "fit" to "Fit video",
+                        "stretch" to "Stretch to screen",
+                        "zoom" to "Fill and crop",
+                        "16:9" to "16:9 Standard",
+                        "4:3" to "4:3 Traditional",
+                        "21:9" to "21:9 Ultrawide",
+                        "1:1" to "1:1 Square"
+                    ).forEach { (mode, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            leadingIcon = { if (videoMode == mode) Icon(Icons.Default.Check, null) },
+                            onClick = { onVideoModeChange(mode); sizeMenu = false }
                         )
                     }
                 }
@@ -1910,7 +2002,8 @@ private fun LiveChannelPreview(
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
     val subtitleLanguages = settings.getString("subtitle_language", "ar,en").orEmpty()
         .split(',').map(String::trim).filter(String::isNotBlank)
-    val videoResizeMode = when (settings.getString("video_mode", "fit")) {
+    var videoMode by remember { mutableStateOf(settings.getString("video_mode", "fit") ?: "fit") }
+    val videoResizeMode = when (videoMode) {
         "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
         "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
         else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -2075,6 +2168,11 @@ private fun LiveChannelPreview(
                     onSkipSecondsChange = {
                         skipSeconds = it
                         settings.edit().putInt("skip_seconds", it).apply()
+                    },
+                    videoMode = videoMode,
+                    onVideoModeChange = {
+                        videoMode = it
+                        settings.edit().putString("video_mode", it).apply()
                     }
                 )
                 Surface(
