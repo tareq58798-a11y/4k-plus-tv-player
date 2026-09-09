@@ -813,6 +813,32 @@ private fun MoviesScreen(
     PremiumBackground {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val landscape = maxWidth > maxHeight
+            if (landscape && view in setOf(MovieView.BROWSE, MovieView.CATEGORY)) {
+                LandscapeMovieBrowser(
+                    movies = movies,
+                    categories = categories,
+                    selectedCategory = selectedCategory,
+                    search = search,
+                    favoriteIds = favoriteIds,
+                    recent = recent,
+                    favorites = favorites,
+                    continueWatching = continueWatching,
+                    onCategory = { selectedCategory = it; search = ""; view = MovieView.CATEGORY },
+                    onSearch = { search = it },
+                    onFavorite = ::toggleFavorite,
+                    onMovie = ::openDetails,
+                    onHide = { category ->
+                        val updated = hiddenCategories + category
+                        hiddenCategories = updated
+                        parental.edit().putStringSet("hidden_movie_categories", updated).apply()
+                        selectedCategory = categories.firstOrNull { it != category }.orEmpty()
+                    },
+                    onBack = {
+                        if (view == MovieView.CATEGORY) view = MovieView.BROWSE else onBack()
+                    }
+                )
+                return@BoxWithConstraints
+            }
             Column(
                 Modifier.fillMaxSize().padding(horizontal = if (landscape) 34.dp else 18.dp, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -930,6 +956,172 @@ private fun MoviesScreen(
                             }
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LandscapeMovieBrowser(
+    movies: List<PlaylistItem>,
+    categories: List<String>,
+    selectedCategory: String,
+    search: String,
+    favoriteIds: Set<String>,
+    recent: List<PlaylistItem>,
+    favorites: List<PlaylistItem>,
+    continueWatching: List<PlaylistItem>,
+    onCategory: (String) -> Unit,
+    onSearch: (String) -> Unit,
+    onFavorite: (PlaylistItem) -> Unit,
+    onMovie: (PlaylistItem) -> Unit,
+    onHide: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    val special = listOf("Continue watching", "Recently watched", "Favorites")
+    val allCategories = special + categories
+    val base = when (selectedCategory) {
+        "Continue watching" -> continueWatching
+        "Recently watched" -> recent
+        "Favorites" -> favorites
+        else -> movies.filter { it.group == selectedCategory }
+    }
+    val displayed = if (search.isBlank()) base else movies.filter { it.name.contains(search.trim(), true) }
+    Row(
+        Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Surface(
+            Modifier.width(250.dp).fillMaxHeight(),
+            shape = RoundedCornerShape(18.dp),
+            color = Color.Black.copy(alpha = .34f),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))
+        ) {
+            Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
+                    Text("Movies", fontSize = 22.sp, fontWeight = FontWeight.Black)
+                }
+                SearchField(search, onSearch, "Search movies")
+                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    items(allCategories) { category ->
+                        Surface(
+                            onClick = { onCategory(category) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(11.dp),
+                            color = if (category == selectedCategory) Cyan.copy(alpha = .24f) else Color.Transparent
+                        ) {
+                            Row(Modifier.padding(start = 12.dp, top = 7.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(category, Modifier.weight(1f), maxLines = 1, fontWeight = if (category == selectedCategory) FontWeight.Bold else FontWeight.Normal)
+                                if (category !in special) {
+                                    IconButton(onClick = { onHide(category) }, modifier = Modifier.size(32.dp)) {
+                                        Icon(Icons.Default.VisibilityOff, "Hide $category", modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Column(Modifier.weight(1f).fillMaxHeight()) {
+            Text(selectedCategory.ifBlank { "Movies" }, fontSize = 24.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.height(10.dp))
+            MovieGrid(displayed, favoriteIds, onFavorite, onMovie, Modifier.weight(1f), true)
+        }
+    }
+}
+
+@Composable
+private fun LandscapeLiveBrowser(
+    categories: List<String>,
+    selectedCategory: String,
+    channels: List<PlaylistItem>,
+    selectedChannel: PlaylistItem?,
+    favoriteIds: Set<String>,
+    onCategory: (String) -> Unit,
+    onChannel: (PlaylistItem) -> Unit,
+    onFavorite: (PlaylistItem) -> Unit,
+    onHide: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        LiveChannelPreview(selectedChannel, Modifier.fillMaxSize())
+        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .36f)))
+        Row(
+            Modifier.fillMaxSize().padding(14.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Surface(
+                Modifier.width(250.dp).fillMaxHeight(),
+                shape = RoundedCornerShape(16.dp),
+                color = Color.Black.copy(alpha = .62f)
+            ) {
+                Column(Modifier.padding(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
+                        Text("Live TV", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Black)
+                    }
+                    LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                        items(categories) { category ->
+                            Surface(
+                                onClick = { onCategory(category) },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(9.dp),
+                                color = if (category == selectedCategory) Orange.copy(alpha = .88f) else Color.Transparent
+                            ) {
+                                Row(Modifier.padding(start = 11.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(category, Modifier.weight(1f), color = Color.White, maxLines = 1)
+                                    if (category !in setOf("Recently watched", "Favorites")) {
+                                        IconButton(onClick = { onHide(category) }, modifier = Modifier.size(30.dp)) {
+                                            Icon(Icons.Default.VisibilityOff, "Hide", tint = Color.White, modifier = Modifier.size(17.dp))
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Surface(
+                Modifier.width(360.dp).fillMaxHeight(),
+                shape = RoundedCornerShape(16.dp),
+                color = Color.Black.copy(alpha = .54f)
+            ) {
+                LazyColumn(contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    items(channels) { channel ->
+                        val selected = channelKey(channel) == selectedChannel?.let(::channelKey)
+                        Surface(
+                            onClick = { onChannel(channel) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(9.dp),
+                            color = if (selected) Cyan.copy(alpha = .32f) else Color.Transparent
+                        ) {
+                            Row(Modifier.padding(7.dp), verticalAlignment = Alignment.CenterVertically) {
+                                AsyncImage(channel.logoUrl, null, Modifier.size(34.dp), contentScale = ContentScale.Fit)
+                                Spacer(Modifier.width(9.dp))
+                                Text(channel.name, Modifier.weight(1f), color = Color.White, maxLines = 1, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                                IconButton(onClick = { onFavorite(channel) }, modifier = Modifier.size(30.dp)) {
+                                    Icon(
+                                        if (channelKey(channel) in favoriteIds) Icons.Default.Star else Icons.Default.StarBorder,
+                                        "Favorite",
+                                        tint = if (channelKey(channel) in favoriteIds) Orange else Color.White,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            selectedChannel?.let {
+                Surface(
+                    Modifier.align(Alignment.BottomEnd).padding(8.dp),
+                    color = Color.Black.copy(alpha = .64f),
+                    shape = RoundedCornerShape(11.dp)
+                ) {
+                    Text(it.name, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
                 }
             }
         }
@@ -1470,7 +1662,40 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
     PremiumBackground {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val landscape = maxWidth > maxHeight
-            val sidePadding = if (landscape) 34.dp else 18.dp
+            if (landscape) {
+                LandscapeLiveBrowser(
+                    categories = buildList {
+                        add(recentlyWatched)
+                        add(favorites)
+                        addAll(categories)
+                    },
+                    selectedCategory = selectedCategory,
+                    channels = selectedChannels,
+                    selectedChannel = previewChannel,
+                    favoriteIds = favoriteIds,
+                    onCategory = { category ->
+                        selectedCategory = category
+                        channelQuery = ""
+                        previewChannel = when (category) {
+                            recentlyWatched -> recentChannels.firstOrNull()
+                            favorites -> favoriteChannels.firstOrNull()
+                            else -> channels.firstOrNull { it.group == category }
+                        } ?: previewChannel
+                    },
+                    onChannel = { rememberChannel(it) },
+                    onFavorite = ::toggleFavorite,
+                    onHide = { category ->
+                        val updated = hiddenCategories + category
+                        hiddenCategories = updated
+                        parental.edit().putStringSet("hidden_live_categories", updated).apply()
+                        selectedCategory = categories.firstOrNull { it != category }.orEmpty()
+                        previewChannel = channels.firstOrNull { it.group == selectedCategory }
+                    },
+                    onBack = onBack
+                )
+                return@BoxWithConstraints
+            }
+            val sidePadding = 18.dp
             Column(
                 Modifier.fillMaxSize().padding(horizontal = sidePadding, vertical = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
