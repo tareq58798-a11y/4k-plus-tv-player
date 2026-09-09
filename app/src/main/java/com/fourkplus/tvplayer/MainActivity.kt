@@ -92,8 +92,8 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { LOADING, ACTIVATION, MANUAL, HOME, LIVE_TV, MOVIES, SERIES }
-private enum class ThemeChoice { SYSTEM, LIGHT, DARK }
+private enum class Screen { LOADING, ACTIVATION, MANUAL, HOME, LIVE_TV, MOVIES, SERIES, SETTINGS }
+internal enum class ThemeChoice { SYSTEM, LIGHT, DARK }
 
 @Composable
 private fun App() {
@@ -108,11 +108,15 @@ private fun App() {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val appPreferences = remember { context.getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE) }
     val playlistRepository = remember { PlaylistRepository(context.applicationContext) }
     var loadedPlaylist by remember { mutableStateOf<LoadedPlaylist?>(null) }
     val message: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
 
     LaunchedEffect(Unit) {
+        themeChoice = runCatching {
+            ThemeChoice.valueOf(appPreferences.getString("theme", ThemeChoice.SYSTEM.name).orEmpty())
+        }.getOrDefault(ThemeChoice.SYSTEM)
         val cachedPlaylist = playlistRepository.loadCached()
         if (cachedPlaylist != null) {
             loadedPlaylist = cachedPlaylist
@@ -155,7 +159,10 @@ private fun App() {
                 }
                 Screen.ACTIVATION -> ActivationScreen(
                     themeChoice = themeChoice,
-                    onThemeChange = { themeChoice = it },
+                    onThemeChange = {
+                        themeChoice = it
+                        appPreferences.edit().putString("theme", it.name).apply()
+                    },
                     onManual = { screen = Screen.MANUAL },
                     onMessage = message
                 )
@@ -170,7 +177,7 @@ private fun App() {
                 )
                 Screen.HOME -> HomeScreen(
                     playlist = loadedPlaylist,
-                    onManage = { screen = Screen.ACTIVATION },
+                    onManage = { screen = Screen.SETTINGS },
                     onOpenLive = { screen = Screen.LIVE_TV },
                     onOpenMovies = { screen = Screen.MOVIES },
                     onOpenSeries = { screen = Screen.SERIES },
@@ -190,6 +197,41 @@ private fun App() {
                     playlist = loadedPlaylist,
                     loadDetails = playlistRepository::seriesDetails,
                     onBack = { screen = Screen.HOME }
+                )
+                Screen.SETTINGS -> SettingsScreen(
+                    playlist = loadedPlaylist,
+                    source = playlistRepository.savedSource(),
+                    themeChoice = themeChoice,
+                    onThemeChange = {
+                        themeChoice = it
+                        appPreferences.edit().putString("theme", it.name).apply()
+                    },
+                    onBack = { screen = Screen.HOME },
+                    onRefresh = {
+                        scope.launch {
+                            val source = playlistRepository.savedSource()
+                            if (source == null) message("No saved playlist to refresh")
+                            else playlistRepository.load(source)
+                                .onSuccess { loadedPlaylist = it; message("Playlist refreshed") }
+                                .onFailure { message(it.message ?: "Playlist refresh failed") }
+                        }
+                    },
+                    onRename = { name ->
+                        runCatching { playlistRepository.renameSavedSource(name) }
+                            .onSuccess {
+                                loadedPlaylist = loadedPlaylist?.copy(name = name)
+                                message("Playlist renamed")
+                            }
+                            .onFailure { message(it.message ?: "Playlist could not be renamed") }
+                    },
+                    onReplace = { screen = Screen.ACTIVATION },
+                    onRemove = {
+                        playlistRepository.clearSavedSource()
+                        loadedPlaylist = null
+                        screen = Screen.ACTIVATION
+                        message("Playlist removed")
+                    },
+                    onMessage = message
                 )
             }
             }
@@ -585,7 +627,11 @@ private fun MoviesScreen(
     loadDetails: suspend (PlaylistItem) -> Result<MovieDetailsInfo>,
     onBack: () -> Unit
 ) {
-    val movies = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.MOVIE }.orEmpty() }
+    val parental = LocalContext.current.getSharedPreferences("parental_settings", android.content.Context.MODE_PRIVATE)
+    val hiddenCategories = parental.getStringSet("hidden_categories", emptySet()).orEmpty()
+    val movies = remember(playlist, hiddenCategories) {
+        playlist?.items?.filter { it.kind == MediaKind.MOVIE && it.group !in hiddenCategories }.orEmpty()
+    }
     val categories = remember(movies) { movies.map { it.group }.distinct() }
     val context = LocalContext.current
     val store = remember { context.getSharedPreferences("movie_library", android.content.Context.MODE_PRIVATE) }
@@ -1020,6 +1066,11 @@ internal fun MoviePlayer(
 ) {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
+    val subtitleLanguages = settings.getString("subtitle_language", "ar,en").orEmpty()
+        .split(',').map(String::trim).filter(String::isNotBlank)
+    val videoResizeMode = if (settings.getString("video_mode", "fit") == "zoom") {
+        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+    } else AspectRatioFrameLayout.RESIZE_MODE_FIT
     var error by remember(movie) { mutableStateOf<String?>(null) }
     var fullscreen by remember(movie) { mutableStateOf(true) }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
@@ -1056,7 +1107,7 @@ internal fun MoviePlayer(
     LaunchedEffect(player, subtitlesEnabled) {
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
-            .setPreferredTextLanguages("ar", "en")
+            .setPreferredTextLanguages(*subtitleLanguages.toTypedArray())
             .setSelectUndeterminedTextLanguage(subtitlesEnabled)
             .build()
     }
@@ -1078,7 +1129,7 @@ internal fun MoviePlayer(
                 factory = {
                     PlayerView(it).apply {
                         useController = true
-                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                        resizeMode = videoResizeMode
                         this.player = player
                         installDoubleTapSeek(this, player, skipSeconds) { forward ->
                             seekFeedback = forward to System.nanoTime()
@@ -1158,7 +1209,11 @@ private enum class LiveView { BROWSE, CATEGORY, PLAYER }
 
 @Composable
 private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessage: (String) -> Unit) {
-    val channels = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.LIVE }.orEmpty() }
+    val parental = LocalContext.current.getSharedPreferences("parental_settings", android.content.Context.MODE_PRIVATE)
+    val hiddenCategories = parental.getStringSet("hidden_categories", emptySet()).orEmpty()
+    val channels = remember(playlist, hiddenCategories) {
+        playlist?.items?.filter { it.kind == MediaKind.LIVE && it.group !in hiddenCategories }.orEmpty()
+    }
     val categories = remember(channels) { channels.map { it.group }.distinct() }
     val recentlyWatched = "Recently watched"
     val favorites = "Favorites"
@@ -1672,6 +1727,11 @@ private fun mediaItemWithSubtitle(context: android.content.Context, streamUrl: S
 private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
+    val subtitleLanguages = settings.getString("subtitle_language", "ar,en").orEmpty()
+        .split(',').map(String::trim).filter(String::isNotBlank)
+    val videoResizeMode = if (settings.getString("video_mode", "fit") == "zoom") {
+        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+    } else AspectRatioFrameLayout.RESIZE_MODE_FIT
     var playbackError by remember { mutableStateOf<String?>(null) }
     var fullscreen by remember { mutableStateOf(false) }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
@@ -1717,7 +1777,7 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
     LaunchedEffect(player, subtitlesEnabled) {
         player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
-            .setPreferredTextLanguages("ar", "en")
+            .setPreferredTextLanguages(*subtitleLanguages.toTypedArray())
             .setSelectUndeterminedTextLanguage(subtitlesEnabled)
             .build()
     }
@@ -1748,7 +1808,7 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                     factory = {
                         PlayerView(it).apply {
                             useController = true
-                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            resizeMode = videoResizeMode
                             this.player = player
                             installDoubleTapSeek(this, player, skipSeconds) { forward ->
                             seekFeedback = forward to System.nanoTime()
