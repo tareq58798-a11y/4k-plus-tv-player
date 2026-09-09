@@ -49,14 +49,15 @@ internal fun SeriesScreen(
     loadDetails: suspend (PlaylistItem) -> Result<SeriesDetailsInfo>,
     onBack: () -> Unit
 ) {
-    val hiddenCategories = LocalContext.current
-        .getSharedPreferences("parental_settings", Context.MODE_PRIVATE)
-        .getStringSet("hidden_categories", emptySet()).orEmpty()
+    val context = LocalContext.current
+    val parental = remember { context.getSharedPreferences("parental_settings", Context.MODE_PRIVATE) }
+    var hiddenCategories by remember {
+        mutableStateOf(parental.getStringSet("hidden_series_categories", emptySet()).orEmpty().toSet())
+    }
     val seriesItems = remember(playlist, hiddenCategories) {
         playlist?.items?.filter { it.kind == MediaKind.SERIES && it.group !in hiddenCategories }.orEmpty()
     }
     val categories = remember(seriesItems) { seriesItems.map { it.group }.distinct() }
-    val context = LocalContext.current
     val store = remember { context.getSharedPreferences("series_library", Context.MODE_PRIVATE) }
     var view by remember { mutableStateOf(SeriesView.BROWSE) }
     var selectedCategory by remember { mutableStateOf(categories.firstOrNull().orEmpty()) }
@@ -185,6 +186,18 @@ internal fun SeriesScreen(
                     lineHeight = if (landscape) 27.sp else 26.sp,
                     fontWeight = FontWeight.Black
                 )
+                if (view == SeriesView.CATEGORY && selectedCategory !in setOf("Continue watching", "Recently watched", "Favorites")) {
+                    TextButton(onClick = {
+                        hiddenCategories = hiddenCategories + selectedCategory
+                        parental.edit().putStringSet("hidden_series_categories", hiddenCategories).apply()
+                        search = ""
+                        view = SeriesView.BROWSE
+                    }) {
+                        Icon(Icons.Default.VisibilityOff, null)
+                        Spacer(Modifier.width(5.dp))
+                        Text("Hide")
+                    }
+                }
                 if (view == SeriesView.DETAILS && selectedSeries != null) {
                     IconButton(onClick = { toggleFavorite(selectedSeries!!) }) {
                         Icon(
