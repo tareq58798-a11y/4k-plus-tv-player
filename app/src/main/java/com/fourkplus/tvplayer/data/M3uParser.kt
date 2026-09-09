@@ -5,7 +5,7 @@ object M3uParser {
     private val movieExtensions = listOf(".mp4", ".mkv", ".avi", ".mov", ".m4v")
 
     fun parse(name: String, content: String): LoadedPlaylist {
-        val lines = content.lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
+        val lines = content.removePrefix("\uFEFF").lineSequence().map(String::trim).filter(String::isNotEmpty).toList()
         require(lines.firstOrNull()?.startsWith("#EXTM3U", ignoreCase = true) == true) {
             "This address did not return a valid M3U playlist."
         }

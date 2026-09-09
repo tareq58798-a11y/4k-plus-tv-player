@@ -8,6 +8,7 @@
 - Latest local commit includes the supplied 4K Plus TV logo, safer screen-edge spacing, and touch feedback.
 - The next functional milestone adds real M3U/provider connection testing, playlist parsing, encrypted source storage, loading/error handling, and real content counts on Home.
 - Version 0.2.1 improves compatibility after a real test returned `Connection reset`: protocol-aware HTTP/HTTPS fallback, VLC-compatible request headers, clearer connection errors, and a working clipboard paste action.
+- Version 0.3.0 replaces the provider-login-to-M3U shortcut with direct Xtream Codes API authentication and separate live, movie, series, and category loading. It also corrects HTTPS on port 80 and retries common compatible request signatures.
 
 ## Product direction
 

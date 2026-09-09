@@ -12,11 +12,12 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 
 class PlaylistRepository(context: Context) {
     private val preferences = EncryptedSharedPreferences.create(
-        context,
-        "playlist_source",
+        context, "playlist_source",
         MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
         EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
@@ -24,92 +25,185 @@ class PlaylistRepository(context: Context) {
 
     suspend fun load(input: PlaylistInput): Result<LoadedPlaylist> = withContext(Dispatchers.IO) {
         runCatching {
-            val content = downloadWithFallback(input)
-            M3uParser.parse(input.name, content).also { saveSource(input) }
-        }.recoverCatching { error ->
-            when (error) {
-                is SocketException -> throw IllegalArgumentException(
-                    "The server closed the connection. Check the address and port, then try again.",
-                    error
-                )
-                else -> throw error
+            val playlist = when (input.kind) {
+                PlaylistKind.M3U_URL -> loadM3u(input)
+                PlaylistKind.PROVIDER_LOGIN -> loadProvider(input)
             }
-        }
+            saveSource(input)
+            playlist
+        }.recoverCatching { throw friendlyError(it) }
     }
 
-    private fun downloadWithFallback(input: PlaylistInput): String {
-        val candidates = addressCandidates(input.address)
-        var lastError: Throwable? = null
-        for (address in candidates) {
-            try {
-                return download(buildSourceUrl(input, address))
-            } catch (error: Exception) {
-                lastError = error
-            }
+    private fun loadM3u(input: PlaylistInput): LoadedPlaylist {
+        var lastError: Exception? = null
+        for (address in addressCandidates(input.address)) {
+            try { return M3uParser.parse(input.name, download(address)) }
+            catch (error: Exception) { lastError = error }
         }
         throw lastError ?: IllegalArgumentException("The playlist address could not be reached.")
     }
 
-    private fun buildSourceUrl(input: PlaylistInput, address: String): String {
-        if (input.kind == PlaylistKind.M3U_URL) return address
-        val separator = if ('?' in address) '&' else '?'
-        return address.trimEnd('/') + "/get.php" + separator +
-            "username=${encode(input.username)}&password=${encode(input.password)}&type=m3u_plus&output=ts"
+    private fun loadProvider(input: PlaylistInput): LoadedPlaylist {
+        var lastError: Exception? = null
+        for (server in addressCandidates(input.address).map(::normalizeServerBase)) {
+            try { return loadProviderFromServer(input, server) }
+            catch (error: Exception) { lastError = error }
+        }
+        throw lastError ?: IllegalArgumentException("The provider could not be reached.")
+    }
+
+    private fun loadProviderFromServer(input: PlaylistInput, server: String): LoadedPlaylist {
+        val auth = JSONObject(download(apiUrl(server, input, null)).trimStart('\uFEFF'))
+        val userInfo = auth.optJSONObject("user_info")
+            ?: throw IllegalArgumentException("This server did not return a compatible provider login response.")
+        val authenticated = userInfo.optInt("auth", 0) == 1
+        val status = userInfo.optString("status", "")
+        require(authenticated && !status.equals("Disabled", true) && !status.equals("Expired", true)) {
+            "The provider rejected this username or password, or the account is inactive."
+        }
+
+        val liveCategories = runCatching { categories(apiUrl(server, input, "get_live_categories")) }.getOrDefault(emptyMap())
+        val movieCategories = runCatching { categories(apiUrl(server, input, "get_vod_categories")) }.getOrDefault(emptyMap())
+        val seriesCategories = runCatching { categories(apiUrl(server, input, "get_series_categories")) }.getOrDefault(emptyMap())
+        val items = buildList {
+            addAll(liveItems(JSONArray(download(apiUrl(server, input, "get_live_streams"))), liveCategories, server, input))
+            addAll(movieItems(JSONArray(download(apiUrl(server, input, "get_vod_streams"))), movieCategories, server, input))
+            addAll(seriesItems(JSONArray(download(apiUrl(server, input, "get_series"))), seriesCategories))
+        }
+        require(items.isNotEmpty()) { "The account connected successfully but contains no available content." }
+        return LoadedPlaylist(input.name.trim(), items, items.map { it.group }.distinct())
+    }
+
+    private fun categories(url: String): Map<String, String> {
+        val array = JSONArray(download(url))
+        return buildMap {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                put(item.optString("category_id"), item.optString("category_name", "Other"))
+            }
+        }
+    }
+
+    private fun liveItems(array: JSONArray, groups: Map<String, String>, server: String, input: PlaylistInput) = buildList {
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            val id = item.optString("stream_id")
+            if (id.isBlank()) continue
+            add(PlaylistItem(
+                item.optString("name", "Unnamed channel"),
+                "$server/live/${encode(input.username)}/${encode(input.password)}/$id.ts",
+                groups[item.optString("category_id")] ?: "Other",
+                item.optString("stream_icon").takeIf(String::isNotBlank),
+                item.optString("epg_channel_id").takeIf(String::isNotBlank),
+                MediaKind.LIVE
+            ))
+        }
+    }
+
+    private fun movieItems(array: JSONArray, groups: Map<String, String>, server: String, input: PlaylistInput) = buildList {
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            val id = item.optString("stream_id")
+            if (id.isBlank()) continue
+            val extension = item.optString("container_extension", "mp4").ifBlank { "mp4" }
+            add(PlaylistItem(
+                item.optString("name", "Unnamed movie"),
+                "$server/movie/${encode(input.username)}/${encode(input.password)}/$id.$extension",
+                groups[item.optString("category_id")] ?: "Other",
+                item.optString("stream_icon").takeIf(String::isNotBlank), id, MediaKind.MOVIE
+            ))
+        }
+    }
+
+    private fun seriesItems(array: JSONArray, groups: Map<String, String>) = buildList {
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            val id = item.optString("series_id")
+            if (id.isBlank()) continue
+            add(PlaylistItem(
+                item.optString("name", "Unnamed series"), "series://$id",
+                groups[item.optString("category_id")] ?: "Other",
+                item.optString("cover").takeIf(String::isNotBlank), id, MediaKind.SERIES
+            ))
+        }
+    }
+
+    private fun apiUrl(server: String, input: PlaylistInput, action: String?): String = buildString {
+        append(server).append("/player_api.php?username=").append(encode(input.username))
+        append("&password=").append(encode(input.password))
+        if (action != null) append("&action=").append(action)
+    }
+
+    private fun normalizeServerBase(value: String): String {
+        val uri = URI(value)
+        val scheme = if (uri.port == 80 && uri.scheme.equals("https", true)) "http" else uri.scheme.lowercase()
+        val port = if (uri.port == -1) "" else ":${uri.port}"
+        val path = uri.path.orEmpty().trimEnd('/').takeUnless { it == "/" }.orEmpty()
+        return "$scheme://${uri.host}$port$path"
     }
 
     private fun addressCandidates(value: String): List<String> {
         val trimmed = value.trim()
         require(trimmed.isNotBlank()) { "Enter a playlist or server address." }
-        val candidates = if (trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true)) {
-            listOf(trimmed)
-        } else {
-            listOf("http://$trimmed", "https://$trimmed")
+        val candidates = when {
+            trimmed.startsWith("https://", true) && URI(trimmed).port == 80 ->
+                listOf(trimmed.replaceFirst(Regex("^https", RegexOption.IGNORE_CASE), "http"))
+            trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true) -> listOf(trimmed)
+            else -> listOf("http://$trimmed", "https://$trimmed")
         }
-        candidates.forEach { candidate ->
-            val uri = URI(candidate)
-            require(uri.host != null) { "Enter a valid server or playlist address." }
-            require(uri.scheme == "http" || uri.scheme == "https") { "Only HTTP and HTTPS addresses are supported." }
-        }
+        candidates.forEach { require(URI(it).host != null) { "Enter a valid server or playlist address." } }
         return candidates
     }
 
-    private fun download(sourceUrl: String): String {
-        val connection = URI(sourceUrl).toURL().openConnection() as HttpURLConnection
-        connection.connectTimeout = 12_000
-        connection.readTimeout = 20_000
-        connection.instanceFollowRedirects = true
-        connection.requestMethod = "GET"
-        connection.setRequestProperty("User-Agent", "VLC/3.0.20 LibVLC/3.0.20")
-        connection.setRequestProperty("Accept", "*/*")
-        connection.setRequestProperty("Accept-Encoding", "identity")
-        connection.setRequestProperty("Connection", "close")
-        try {
-            val code = connection.responseCode
-            require(code in 200..299) { "The provider returned error $code. Check your details and try again." }
-            return BufferedReader(InputStreamReader(connection.inputStream)).use { reader ->
-                buildString {
-                    var total = 0
-                    while (true) {
-                        val line = reader.readLine() ?: break
-                        total += line.length
-                        require(total <= 25_000_000) { "This playlist is too large to load safely." }
-                        appendLine(line)
-                    }
+    private fun download(url: String): String {
+        val userAgents = listOf("IPTVSmartersPro", "VLC/3.0.20 LibVLC/3.0.20", "Mozilla/5.0 (Android)")
+        var lastCode = -1
+        for (userAgent in userAgents) {
+            val connection = URI(url).toURL().openConnection() as HttpURLConnection
+            connection.connectTimeout = 15_000
+            connection.readTimeout = 30_000
+            connection.instanceFollowRedirects = true
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("User-Agent", userAgent)
+            connection.setRequestProperty("Accept", "*/*")
+            connection.setRequestProperty("Accept-Encoding", "identity")
+            connection.setRequestProperty("Connection", "close")
+            try {
+                lastCode = connection.responseCode
+                if (lastCode in 200..299) return readBody(connection)
+                if (lastCode != 401 && lastCode != 403) break
+            } finally { connection.disconnect() }
+        }
+        throw IllegalArgumentException(
+            if (lastCode == 401 || lastCode == 403) "The provider denied access. Check the account details or connection limit."
+            else "The provider could not complete the request. Try again shortly."
+        )
+    }
+
+    private fun readBody(connection: HttpURLConnection): String =
+        BufferedReader(InputStreamReader(connection.inputStream)).use { reader ->
+            buildString {
+                var total = 0
+                while (true) {
+                    val line = reader.readLine() ?: break
+                    total += line.length
+                    require(total <= 80_000_000) { "The provider response is too large to load safely." }
+                    appendLine(line)
                 }
             }
-        } finally {
-            connection.disconnect()
         }
+
+    private fun friendlyError(error: Throwable): Throwable = when {
+        error is SocketException -> IllegalArgumentException("The server closed the connection. Verify the server address and try again.", error)
+        error.message?.contains("TLS", true) == true -> IllegalArgumentException("This server uses HTTP rather than HTTPS. Please use its HTTP address.", error)
+        error is org.json.JSONException -> IllegalArgumentException("This server returned an unsupported response. Confirm that it supports provider login.", error)
+        else -> error
     }
 
     private fun saveSource(input: PlaylistInput) {
-        preferences.edit()
-            .putString("name", input.name.trim())
-            .putString("kind", input.kind.name)
-            .putString("address", input.address.trim())
-            .putString("username", input.username)
-            .putString("password", input.password)
-            .apply()
+        preferences.edit().putString("name", input.name.trim()).putString("kind", input.kind.name)
+            .putString("address", input.address.trim()).putString("username", input.username)
+            .putString("password", input.password).apply()
     }
 
     private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
