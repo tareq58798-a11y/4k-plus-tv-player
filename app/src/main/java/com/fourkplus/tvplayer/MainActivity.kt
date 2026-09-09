@@ -1015,6 +1015,7 @@ private fun MoviePlayer(
             .setSeekBackIncrementMs(skipSeconds * 1_000L)
             .setSeekForwardIncrementMs(skipSeconds * 1_000L)
             .build()
+            .apply { volume = if (settings.getBoolean("muted", false)) 0f else 1f }
     }
     LaunchedEffect(player, movie.streamUrl, externalSubtitle) {
         error = null
@@ -1050,11 +1051,21 @@ private fun MoviePlayer(
         Surface(contentModifier, shape, color = Color.Black) {
             Box(Modifier.fillMaxSize()) {
             AndroidView(
-                factory = { PlayerView(it).apply { useController = true; this.player = player } },
-                update = { it.player = player }, modifier = Modifier.fillMaxSize()
+                factory = {
+                    PlayerView(it).apply {
+                        useController = true
+                        this.player = player
+                        installDoubleTapSeek(this, player, skipSeconds)
+                    }
+                },
+                update = {
+                    it.player = player
+                    installDoubleTapSeek(it, player, skipSeconds)
+                }, modifier = Modifier.fillMaxSize()
             )
             PlaybackOptionsOverlay(
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                player = player,
                 fullscreen = fullscreen,
                 onFullscreenChange = { fullscreen = it },
                 subtitlesEnabled = subtitlesEnabled,
@@ -1429,9 +1440,36 @@ private fun ChannelPoster(
     }
 }
 
+private fun installDoubleTapSeek(view: PlayerView, player: Player, skipSeconds: Int) {
+    val detector = android.view.GestureDetector(
+        view.context,
+        object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(event: android.view.MotionEvent): Boolean = true
+
+            override fun onDoubleTap(event: android.view.MotionEvent): Boolean {
+                if (!player.isCurrentMediaItemSeekable) return false
+                val intervalMs = skipSeconds * 1_000L
+                val destination = if (event.x < view.width / 2f) {
+                    (player.currentPosition - intervalMs).coerceAtLeast(0L)
+                } else {
+                    val forward = player.currentPosition + intervalMs
+                    if (player.duration > 0L) forward.coerceAtMost(player.duration) else forward
+                }
+                player.seekTo(destination)
+                return true
+            }
+        }
+    )
+    view.setOnTouchListener { _, event ->
+        detector.onTouchEvent(event)
+        false
+    }
+}
+
 @Composable
 private fun PlaybackOptionsOverlay(
     modifier: Modifier = Modifier,
+    player: Player,
     fullscreen: Boolean,
     onFullscreenChange: (Boolean) -> Unit,
     subtitlesEnabled: Boolean,
@@ -1444,6 +1482,7 @@ private fun PlaybackOptionsOverlay(
     val context = LocalContext.current
     var subtitleMenu by remember { mutableStateOf(false) }
     var skipMenu by remember { mutableStateOf(false) }
+    var muted by remember(player) { mutableStateOf(player.volume == 0f) }
     val subtitlePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
             runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
@@ -1457,6 +1496,21 @@ private fun PlaybackOptionsOverlay(
         shape = RoundedCornerShape(13.dp)
     ) {
         Row(Modifier.padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(
+                onClick = {
+                    muted = !muted
+                    player.volume = if (muted) 0f else 1f
+                    context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE)
+                        .edit().putBoolean("muted", muted).apply()
+                },
+                modifier = Modifier.size(38.dp)
+            ) {
+                Icon(
+                    if (muted) Icons.Default.VolumeOff else Icons.Default.VolumeUp,
+                    if (muted) "Unmute" else "Mute",
+                    tint = if (muted) Cyan else Color.White
+                )
+            }
             Box {
                 IconButton(onClick = { subtitleMenu = true }, modifier = Modifier.size(38.dp)) {
                     Icon(Icons.Default.Subtitles, "Subtitles", tint = if (subtitlesEnabled) Cyan else Color.White)
@@ -1535,7 +1589,10 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
             .setSeekBackIncrementMs(skipSeconds * 1_000L)
             .setSeekForwardIncrementMs(skipSeconds * 1_000L)
             .build()
-            .apply { playWhenReady = true }
+            .apply {
+                playWhenReady = true
+                volume = if (settings.getBoolean("muted", false)) 0f else 1f
+            }
     }
 
     LaunchedEffect(channel?.streamUrl, externalSubtitle) {
@@ -1584,12 +1641,22 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                 }
             } else {
                 AndroidView(
-                    factory = { PlayerView(it).apply { useController = true; this.player = player } },
-                    update = { it.player = player },
+                    factory = {
+                        PlayerView(it).apply {
+                            useController = true
+                            this.player = player
+                            installDoubleTapSeek(this, player, skipSeconds)
+                        }
+                    },
+                    update = {
+                        it.player = player
+                        installDoubleTapSeek(it, player, skipSeconds)
+                    },
                     modifier = Modifier.fillMaxSize()
                 )
                 PlaybackOptionsOverlay(
                     modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                    player = player,
                     fullscreen = fullscreen,
                     onFullscreenChange = { fullscreen = it },
                     subtitlesEnabled = subtitlesEnabled,
