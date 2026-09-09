@@ -748,6 +748,7 @@ private fun MoviesScreen(
                             movie = movie,
                             startPosition = progress[channelKey(movie)] ?: 0L,
                             onProgress = { position, duration -> saveProgress(movie, position, duration) },
+                            onExit = { view = MovieView.DETAILS },
                             modifier = if (landscape) {
                                 Modifier.weight(1f)
                             } else {
@@ -1007,12 +1008,13 @@ private fun MoviePlayer(
     movie: PlaylistItem,
     startPosition: Long,
     onProgress: (Long, Long) -> Unit,
+    onExit: () -> Unit,
     modifier: Modifier
 ) {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
     var error by remember(movie) { mutableStateOf<String?>(null) }
-    var fullscreen by remember { mutableStateOf(false) }
+    var fullscreen by remember(movie) { mutableStateOf(true) }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(movie) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
@@ -1121,7 +1123,7 @@ private fun MoviePlayer(
     }
     if (fullscreen) {
         Dialog(
-            onDismissRequest = { fullscreen = false },
+            onDismissRequest = onExit,
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
         ) { playerContent(Modifier.fillMaxSize(), RectangleShape) }
     } else {
@@ -1766,7 +1768,9 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                     modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                     player = player,
                     fullscreen = fullscreen,
-                    onFullscreenChange = { fullscreen = it },
+                    onFullscreenChange = { enabled ->
+                     if (enabled) fullscreen = true else onExit()
+                 },
                     subtitlesEnabled = subtitlesEnabled,
                     onSubtitlesEnabledChange = {
                         subtitlesEnabled = it
