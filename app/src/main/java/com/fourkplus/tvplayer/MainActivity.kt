@@ -641,10 +641,15 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                                 contentPadding = PaddingValues(bottom = 18.dp)
                             ) {
                                 gridItems(searchedChannels, key = ::channelKey) { channel ->
-                                    ChannelPoster(channel, channelKey(channel) in favoriteIds, { toggleFavorite(channel) }) {
-                                        rememberChannel(channel)
-                                        view = LiveView.PLAYER
-                                    }
+                                    ChannelPoster(
+                                        channel = channel,
+                                        favorite = channelKey(channel) in favoriteIds,
+                                        onFavorite = { toggleFavorite(channel) },
+                                        onClick = {
+                                            rememberChannel(channel)
+                                            view = LiveView.PLAYER
+                                        }
+                                    )
                                 }
                             }
                         }
