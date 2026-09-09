@@ -92,7 +92,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { LOADING, ACTIVATION, MANUAL, HOME, LIVE_TV, MOVIES }
+private enum class Screen { LOADING, ACTIVATION, MANUAL, HOME, LIVE_TV, MOVIES, SERIES }
 private enum class ThemeChoice { SYSTEM, LIGHT, DARK }
 
 @Composable
@@ -173,6 +173,7 @@ private fun App() {
                     onManage = { screen = Screen.ACTIVATION },
                     onOpenLive = { screen = Screen.LIVE_TV },
                     onOpenMovies = { screen = Screen.MOVIES },
+                    onOpenSeries = { screen = Screen.SERIES },
                     onMessage = message
                 )
                 Screen.LIVE_TV -> LiveTvScreen(
@@ -183,6 +184,11 @@ private fun App() {
                 Screen.MOVIES -> MoviesScreen(
                     playlist = loadedPlaylist,
                     loadDetails = playlistRepository::movieDetails,
+                    onBack = { screen = Screen.HOME }
+                )
+                Screen.SERIES -> SeriesScreen(
+                    playlist = loadedPlaylist,
+                    loadDetails = playlistRepository::seriesDetails,
                     onBack = { screen = Screen.HOME }
                 )
             }
@@ -517,6 +523,7 @@ private fun HomeScreen(
     onManage: () -> Unit,
     onOpenLive: () -> Unit,
     onOpenMovies: () -> Unit,
+    onOpenSeries: () -> Unit,
     onMessage: (String) -> Unit
 ) {
     var visible by remember { mutableStateOf(false) }
@@ -547,13 +554,13 @@ private fun HomeScreen(
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.weight(1f), onOpenLive)
                     HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f), onOpenMovies)
-                    HomeTile("Series", playlist?.let { "${it.seriesCount} series" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series browsing is the next milestone") }
+                    HomeTile("Series", playlist?.let { "${it.seriesCount} series" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f), onOpenSeries)
                 }
             } else {
                 HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.fillMaxWidth(), onOpenLive)
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f), onOpenMovies)
-                    HomeTile("Series", playlist?.let { "${it.seriesCount} series" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series browsing is the next milestone") }
+                    HomeTile("Series", playlist?.let { "${it.seriesCount} series" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f), onOpenSeries)
                 }
             }
             Text("Quick access", fontSize = 20.sp, fontWeight = FontWeight.Bold)
@@ -1004,7 +1011,7 @@ private fun readableMovieDuration(value: String?): String? {
 }
 
 @Composable
-private fun MoviePlayer(
+internal fun MoviePlayer(
     movie: PlaylistItem,
     startPosition: Long,
     onProgress: (Long, Long) -> Unit,
@@ -1878,7 +1885,7 @@ private fun CompactChannelRow(
     }
 }
 
-private fun channelKey(channel: PlaylistItem): String = channel.channelId ?: "${channel.group}:${channel.name}"
+internal fun channelKey(channel: PlaylistItem): String = channel.channelId ?: "${channel.group}:${channel.name}"
 
 @Composable
 private fun ChannelRow(channel: PlaylistItem, favorite: Boolean, onFavorite: () -> Unit, onClick: () -> Unit) {
