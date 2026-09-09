@@ -22,6 +22,7 @@ The full cross-device architecture and porting reference is maintained in `PORTI
 - Version 0.7.0 securely restores the saved playlist at launch, keeps an auto-playing preview on category pages, starts each category with its first channel, resets inaccurate legacy history, records only deliberate selections, and lets the player switch between the current category and Recently watched.
 - Version 0.7.1 adds a compressed on-device playlist cache. After the first successful load creates it, later launches open the dashboard from local data immediately instead of downloading the full provider library again.
 - Version 0.7.2 fixes Recently watched using each provider channel's unique stream ID instead of a potentially blank or shared EPG ID. It resets the corrupted v2 history and rebuilds the playlist cache once with corrected channel identities.
+- Version 0.8.0 adds the Movies experience: category shelves and See all grids, global movie search, provider metadata, poster/details pages, favorites, recently watched, Continue watching, full Media3 playback, saved resume positions, and system-back navigation. Cache v3 stores the new movie metadata.
 
 ## Product direction
 
@@ -55,4 +56,4 @@ The current interface is clean but feels too plain. Keep it minimal and easy to 
 
 ## Next step
 
-Build and test version 0.4.0 through GitHub Actions. Verify Live TV category filtering, search, logos, scrolling performance, and favorites with a real large account. Then add Media3 live playback before building the Movies and Series browsers. Visual refinements remain intentionally deferred.
+Build and test version 0.8.0 through GitHub Actions. Verify movie loading, global search, category grids, details, playback, favorites, Recently watched, and resume progress with a real provider account. Series browsing is the next functional milestone; visual refinements remain intentionally deferred.

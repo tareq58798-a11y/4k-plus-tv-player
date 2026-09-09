@@ -18,7 +18,11 @@ data class PlaylistItem(
     val group: String,
     val logoUrl: String?,
     val channelId: String?,
-    val kind: MediaKind
+    val kind: MediaKind,
+    val description: String? = null,
+    val year: String? = null,
+    val rating: String? = null,
+    val duration: String? = null
 )
 
 data class LoadedPlaylist(

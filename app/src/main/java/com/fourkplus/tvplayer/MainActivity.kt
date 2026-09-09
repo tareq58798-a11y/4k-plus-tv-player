@@ -2,6 +2,7 @@ package com.fourkplus.tvplayer
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
@@ -78,7 +79,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { LOADING, ACTIVATION, MANUAL, HOME, LIVE_TV }
+private enum class Screen { LOADING, ACTIVATION, MANUAL, HOME, LIVE_TV, MOVIES }
 private enum class ThemeChoice { SYSTEM, LIGHT, DARK }
 
 @Composable
@@ -158,12 +159,17 @@ private fun App() {
                     playlist = loadedPlaylist,
                     onManage = { screen = Screen.ACTIVATION },
                     onOpenLive = { screen = Screen.LIVE_TV },
+                    onOpenMovies = { screen = Screen.MOVIES },
                     onMessage = message
                 )
                 Screen.LIVE_TV -> LiveTvScreen(
                     playlist = loadedPlaylist,
                     onBack = { screen = Screen.HOME },
                     onMessage = message
+                )
+                Screen.MOVIES -> MoviesScreen(
+                    playlist = loadedPlaylist,
+                    onBack = { screen = Screen.HOME }
                 )
             }
             }
@@ -496,6 +502,7 @@ private fun HomeScreen(
     playlist: LoadedPlaylist?,
     onManage: () -> Unit,
     onOpenLive: () -> Unit,
+    onOpenMovies: () -> Unit,
     onMessage: (String) -> Unit
 ) {
     var visible by remember { mutableStateOf(false) }
@@ -521,17 +528,17 @@ private fun HomeScreen(
             AnimatedVisibility(
                 visible = visible,
                 enter = fadeIn(tween(450)) + slideInVertically(tween(450)) { it / 4 }
-            ) { ContinueCard { onMessage("Nothing to continue yet") } }
+            ) { ContinueCard { if ((playlist?.movieCount ?: 0) > 0) onOpenMovies() else onMessage("Nothing to continue yet") } }
             if (landscape) {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.weight(1f), onOpenLive)
-                    HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f)) { onMessage("Movie browsing is the next milestone") }
+                    HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f), onOpenMovies)
                     HomeTile("Series", playlist?.let { "${it.seriesCount} series" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series browsing is the next milestone") }
                 }
             } else {
                 HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.fillMaxWidth(), onOpenLive)
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f)) { onMessage("Movie browsing is the next milestone") }
+                    HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f), onOpenMovies)
                     HomeTile("Series", playlist?.let { "${it.seriesCount} series" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series browsing is the next milestone") }
                 }
             }
@@ -547,6 +554,357 @@ private fun HomeScreen(
         }
     }
     }
+}
+
+private enum class MovieView { BROWSE, CATEGORY, DETAILS, PLAYER }
+
+@Composable
+private fun MoviesScreen(playlist: LoadedPlaylist?, onBack: () -> Unit) {
+    val movies = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.MOVIE }.orEmpty() }
+    val categories = remember(movies) { movies.map { it.group }.distinct() }
+    val context = LocalContext.current
+    val store = remember { context.getSharedPreferences("movie_library", android.content.Context.MODE_PRIVATE) }
+    var view by remember { mutableStateOf(MovieView.BROWSE) }
+    var selectedCategory by remember { mutableStateOf(categories.firstOrNull().orEmpty()) }
+    var selectedMovie by remember { mutableStateOf<PlaylistItem?>(null) }
+    var search by remember { mutableStateOf("") }
+    var favoriteIds by remember { mutableStateOf(store.getStringSet("favorites", emptySet()).orEmpty().toSet()) }
+    var recentIds by remember {
+        mutableStateOf(store.getString("recent_v1", "").orEmpty().split('\u001F').filter(String::isNotBlank))
+    }
+    var progress by remember {
+        mutableStateOf(
+            store.all.mapNotNull { (key, value) ->
+                if (key.startsWith("progress_") && value is Long && value > 0L) key.removePrefix("progress_") to value else null
+            }.toMap()
+        )
+    }
+    val byId = remember(movies) { movies.associateBy(::channelKey) }
+    val favorites = remember(movies, favoriteIds) { movies.filter { channelKey(it) in favoriteIds } }
+    val recent = remember(byId, recentIds) { recentIds.mapNotNull(byId::get) }
+    val continueWatching = remember(movies, progress) {
+        movies.filter { (progress[channelKey(it)] ?: 0L) >= 30_000L }
+            .sortedByDescending { progress[channelKey(it)] ?: 0L }
+    }
+
+    fun toggleFavorite(movie: PlaylistItem) {
+        val id = channelKey(movie)
+        val updated = if (id in favoriteIds) favoriteIds - id else favoriteIds + id
+        favoriteIds = updated
+        store.edit().putStringSet("favorites", updated).apply()
+    }
+    fun openDetails(movie: PlaylistItem) {
+        selectedMovie = movie
+        view = MovieView.DETAILS
+    }
+    fun recordRecent(movie: PlaylistItem) {
+        val id = channelKey(movie)
+        val updated = (listOf(id) + recentIds.filterNot { it == id }).take(30)
+        recentIds = updated
+        store.edit().putString("recent_v1", updated.joinToString("\u001F")).apply()
+    }
+    fun saveProgress(movie: PlaylistItem, position: Long, duration: Long) {
+        val id = channelKey(movie)
+        val normalized = if (duration > 0L && position >= duration - 20_000L) 0L else position.coerceAtLeast(0L)
+        progress = if (normalized == 0L) progress - id else progress + (id to normalized)
+        store.edit().putLong("progress_$id", normalized).apply()
+    }
+    fun goBack() {
+        when (view) {
+            MovieView.BROWSE -> onBack()
+            MovieView.CATEGORY -> { search = ""; view = MovieView.BROWSE }
+            MovieView.DETAILS -> view = MovieView.BROWSE
+            MovieView.PLAYER -> view = MovieView.DETAILS
+        }
+    }
+    BackHandler(onBack = ::goBack)
+
+    PremiumBackground {
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val landscape = maxWidth > maxHeight
+            Column(
+                Modifier.fillMaxSize().padding(horizontal = if (landscape) 34.dp else 18.dp, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = ::goBack) { Icon(Icons.Default.ArrowBack, "Back") }
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            when (view) {
+                                MovieView.BROWSE -> "Movies"
+                                MovieView.CATEGORY -> selectedCategory
+                                else -> selectedMovie?.name ?: "Movies"
+                            },
+                            fontSize = 25.sp, fontWeight = FontWeight.Black, maxLines = 1
+                        )
+                        if (view == MovieView.BROWSE) Text("${movies.size} movies", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (view == MovieView.DETAILS && selectedMovie != null) {
+                        IconButton(onClick = { toggleFavorite(selectedMovie!!) }) {
+                            Icon(
+                                if (channelKey(selectedMovie!!) in favoriteIds) Icons.Default.Star else Icons.Default.StarBorder,
+                                "Favorite",
+                                tint = if (channelKey(selectedMovie!!) in favoriteIds) Orange else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                when (view) {
+                    MovieView.BROWSE -> {
+                        SearchField(search, { search = it }, "Search all movies")
+                        if (search.isNotBlank()) {
+                            val results = remember(movies, search) { movies.filter { it.name.contains(search.trim(), true) } }
+                            MovieGrid(results, favoriteIds, ::toggleFavorite, ::openDetails, Modifier.weight(1f), landscape)
+                        } else {
+                            val sections = buildList {
+                                if (continueWatching.isNotEmpty()) add("Continue watching" to continueWatching)
+                                if (recent.isNotEmpty()) add("Recently watched" to recent)
+                                if (favorites.isNotEmpty()) add("Favorites" to favorites)
+                                categories.forEach { category -> add(category to movies.filter { it.group == category }) }
+                            }
+                            if (sections.isEmpty()) {
+                                MovieEmptyState("No movies were found.")
+                            } else {
+                                LazyColumn(
+                                    Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(18.dp),
+                                    contentPadding = PaddingValues(bottom = 20.dp)
+                                ) {
+                                    items(sections) { (title, sectionMovies) ->
+                                        MovieShelf(
+                                            title, sectionMovies, favoriteIds,
+                                            onSeeAll = { selectedCategory = title; view = MovieView.CATEGORY },
+                                            onFavorite = ::toggleFavorite,
+                                            onMovie = ::openDetails
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    MovieView.CATEGORY -> {
+                        SearchField(search, { search = it }, "Search all movies")
+                        val base = when (selectedCategory) {
+                            "Continue watching" -> continueWatching
+                            "Recently watched" -> recent
+                            "Favorites" -> favorites
+                            else -> movies.filter { it.group == selectedCategory }
+                        }
+                        val results = if (search.isBlank()) base else movies.filter { it.name.contains(search.trim(), true) }
+                        MovieGrid(results, favoriteIds, ::toggleFavorite, ::openDetails, Modifier.weight(1f), landscape)
+                    }
+                    MovieView.DETAILS -> selectedMovie?.let { movie ->
+                        MovieDetails(
+                            movie = movie,
+                            favorite = channelKey(movie) in favoriteIds,
+                            resumePosition = progress[channelKey(movie)] ?: 0L,
+                            onFavorite = { toggleFavorite(movie) },
+                            onPlay = { recordRecent(movie); view = MovieView.PLAYER },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    MovieView.PLAYER -> selectedMovie?.let { movie ->
+                        MoviePlayer(
+                            movie = movie,
+                            startPosition = progress[channelKey(movie)] ?: 0L,
+                            onProgress = { position, duration -> saveProgress(movie, position, duration) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MovieShelf(
+    title: String,
+    movies: List<PlaylistItem>,
+    favoriteIds: Set<String>,
+    onSeeAll: () -> Unit,
+    onFavorite: (PlaylistItem) -> Unit,
+    onMovie: (PlaylistItem) -> Unit
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(title, Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            TextButton(onClick = onSeeAll) { Text("See all", color = Cyan); Icon(Icons.Default.ChevronRight, null, tint = Cyan) }
+        }
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+            items(movies.take(16)) { movie ->
+                MoviePoster(movie, channelKey(movie) in favoriteIds, { onFavorite(movie) }, { onMovie(movie) }, Modifier.width(128.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun MovieGrid(
+    movies: List<PlaylistItem>,
+    favoriteIds: Set<String>,
+    onFavorite: (PlaylistItem) -> Unit,
+    onMovie: (PlaylistItem) -> Unit,
+    modifier: Modifier,
+    landscape: Boolean
+) {
+    if (movies.isEmpty()) {
+        Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No movies match your search.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+    } else {
+        LazyVerticalGrid(
+            columns = GridCells.Fixed(if (landscape) 6 else 3), modifier = modifier,
+            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(bottom = 20.dp)
+        ) {
+            gridItems(movies) { movie ->
+                MoviePoster(movie, channelKey(movie) in favoriteIds, { onFavorite(movie) }, { onMovie(movie) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun MoviePoster(
+    movie: PlaylistItem,
+    favorite: Boolean,
+    onFavorite: () -> Unit,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Column(modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick)) {
+        Surface(
+            Modifier.fillMaxWidth().aspectRatio(2f / 3f), RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant,
+            border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Movie, null, tint = Orange.copy(alpha = .5f), modifier = Modifier.size(38.dp))
+                if (!movie.logoUrl.isNullOrBlank()) AsyncImage(movie.logoUrl, movie.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                IconButton(
+                    onClick = onFavorite,
+                    modifier = Modifier.align(Alignment.TopEnd).size(34.dp).background(Color.Black.copy(alpha = .55f), RoundedCornerShape(10.dp))
+                ) {
+                    Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite", tint = if (favorite) Orange else Color.White, modifier = Modifier.size(19.dp))
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(movie.name, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 2)
+        if (!movie.year.isNullOrBlank()) Text(movie.year, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun MovieDetails(
+    movie: PlaylistItem,
+    favorite: Boolean,
+    resumePosition: Long,
+    onFavorite: () -> Unit,
+    onPlay: () -> Unit,
+    modifier: Modifier
+) {
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val landscape = maxWidth > maxHeight
+        val details: @Composable ColumnScope.() -> Unit = {
+            Text(movie.name, fontSize = 27.sp, fontWeight = FontWeight.Black)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOfNotNull(movie.year, movie.rating?.let { "★ $it" }, movie.duration, movie.group).forEach {
+                    SuggestionChip(onClick = {}, label = { Text(it, maxLines = 1) })
+                }
+            }
+            Text(movie.description?.takeIf(String::isNotBlank) ?: "Movie information was not supplied by this provider.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = onPlay, Modifier.fillMaxWidth().height(52.dp)) {
+                Icon(if (resumePosition > 0L) Icons.Default.Replay else Icons.Default.PlayArrow, null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (resumePosition > 0L) "Resume from ${formatPlaybackTime(resumePosition)}" else "Play movie")
+            }
+            OutlinedButton(onClick = onFavorite, Modifier.fillMaxWidth()) {
+                Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (favorite) "Remove from favorites" else "Add to favorites")
+            }
+        }
+        if (landscape) {
+            Row(Modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(22.dp)) {
+                Surface(Modifier.weight(.8f).fillMaxHeight(), RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    if (!movie.logoUrl.isNullOrBlank()) AsyncImage(movie.logoUrl, movie.name, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                }
+                Column(Modifier.weight(1.2f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp), content = details)
+            }
+        } else {
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                Surface(Modifier.fillMaxWidth().height(330.dp), RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    if (!movie.logoUrl.isNullOrBlank()) AsyncImage(movie.logoUrl, movie.name, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+                }
+                details()
+            }
+        }
+    }
+}
+
+@Composable
+private fun MoviePlayer(
+    movie: PlaylistItem,
+    startPosition: Long,
+    onProgress: (Long, Long) -> Unit,
+    modifier: Modifier
+) {
+    val context = LocalContext.current
+    var error by remember(movie) { mutableStateOf<String?>(null) }
+    val player = remember(movie.streamUrl) {
+        val factory = DefaultHttpDataSource.Factory().setUserAgent("VLC/3.0.20 LibVLC/3.0.20").setAllowCrossProtocolRedirects(true)
+        ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(factory)).build()
+    }
+    LaunchedEffect(player, movie.streamUrl) {
+        error = null
+        player.setMediaItem(MediaItem.fromUri(movie.streamUrl))
+        if (startPosition > 0L) player.seekTo(startPosition)
+        player.prepare()
+        player.playWhenReady = true
+        while (true) {
+            delay(2_000)
+            if (player.currentPosition > 0L) onProgress(player.currentPosition, player.duration)
+        }
+    }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlayerError(playbackException: PlaybackException) { error = "This movie could not be played." }
+        }
+        player.addListener(listener)
+        onDispose {
+            if (player.currentPosition > 0L) onProgress(player.currentPosition, player.duration)
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+    Surface(modifier.fillMaxWidth(), RoundedCornerShape(18.dp), color = Color.Black) {
+        Box(Modifier.fillMaxSize()) {
+            AndroidView(
+                factory = { PlayerView(it).apply { useController = true; this.player = player } },
+                update = { it.player = player }, modifier = Modifier.fillMaxSize()
+            )
+            error?.let {
+                Surface(Modifier.align(Alignment.Center).padding(20.dp), RoundedCornerShape(12.dp), color = Color.Black.copy(alpha = .84f)) {
+                    Text(it, color = Color.White, modifier = Modifier.padding(16.dp))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ColumnScope.MovieEmptyState(message: String) {
+    Column(Modifier.fillMaxWidth().weight(1f), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+        AccentIcon(Icons.Default.Movie, Orange)
+        Spacer(Modifier.height(12.dp))
+        Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private fun formatPlaybackTime(milliseconds: Long): String {
+    val totalMinutes = milliseconds.coerceAtLeast(0L) / 60_000L
+    return if (totalMinutes >= 60) "${totalMinutes / 60}h ${totalMinutes % 60}m" else "${totalMinutes}m"
 }
 
 private enum class LiveView { BROWSE, CATEGORY, PLAYER }

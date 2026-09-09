@@ -38,7 +38,7 @@ This document is the durable technical and product reference for adapting 4K Plu
 - Continue Watching card.
 - Live TV, Movies, and Series cards with real item counts.
 - Quick access for Favorites, Recently watched, and Playlists.
-- Live TV browsing is implemented. Movies, Series, full playback history, settings, parental controls, updates, and external-player fallback remain future milestones.
+- Live TV and Movies browsing/playback are implemented. Series, settings, parental controls, updates, and external-player fallback remain future milestones.
 
 ## Live TV behavior
 
@@ -191,7 +191,8 @@ When porting, preserve category order from the provider rather than alphabetical
 
 ## Known limitations and future milestones
 
-- Movies and Series browsing/playback are not yet implemented.
+- Movies browsing, details, playback, favorites, history, and resume progress are implemented; provider metadata may be incomplete.
+- Series browsing/playback is not yet implemented.
 - Series episode API/loading is not yet implemented.
 - EPG is not yet implemented.
 - Full-screen playback and orientation behavior need refinement.

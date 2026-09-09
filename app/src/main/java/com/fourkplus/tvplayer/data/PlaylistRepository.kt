@@ -72,7 +72,11 @@ class PlaylistRepository(context: Context) {
                         group = input.readSizedString(),
                         logoUrl = input.readNullableString(),
                         channelId = input.readNullableString(),
-                        kind = MediaKind.valueOf(input.readSizedString())
+                        kind = MediaKind.valueOf(input.readSizedString()),
+                        description = input.readNullableString(),
+                        year = input.readNullableString(),
+                        rating = input.readNullableString(),
+                        duration = input.readNullableString()
                     )
                 }
                 LoadedPlaylist(name, items, items.map { it.group }.distinct())
@@ -159,7 +163,12 @@ class PlaylistRepository(context: Context) {
                 item.optString("name", "Unnamed movie"),
                 "$server/movie/${encode(input.username)}/${encode(input.password)}/$id.$extension",
                 groups[item.optString("category_id")] ?: "Other",
-                item.optString("stream_icon").takeIf(String::isNotBlank), id, MediaKind.MOVIE
+                item.optString("stream_icon").takeIf(String::isNotBlank), id, MediaKind.MOVIE,
+                description = item.optString("plot").takeIf(String::isNotBlank),
+                year = item.optString("year").takeIf(String::isNotBlank)
+                    ?: item.optString("releaseDate").take(4).takeIf(String::isNotBlank),
+                rating = item.optString("rating").takeIf(String::isNotBlank),
+                duration = item.optString("duration").takeIf(String::isNotBlank)
             ))
         }
     }
@@ -269,6 +278,10 @@ class PlaylistRepository(context: Context) {
                     output.writeNullableString(item.logoUrl)
                     output.writeNullableString(item.channelId)
                     output.writeSizedString(item.kind.name)
+                    output.writeNullableString(item.description)
+                    output.writeNullableString(item.year)
+                    output.writeNullableString(item.rating)
+                    output.writeNullableString(item.duration)
                 }
             }
             if (!temporary.renameTo(cacheFile)) {
@@ -302,5 +315,5 @@ class PlaylistRepository(context: Context) {
 
     private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
 
-    private companion object { const val CACHE_VERSION = 2 }
+    private companion object { const val CACHE_VERSION = 3 }
 }
