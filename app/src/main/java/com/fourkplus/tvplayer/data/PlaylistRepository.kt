@@ -73,6 +73,8 @@ class PlaylistRepository(context: Context) {
             DataInputStream(GZIPInputStream(cacheFile.inputStream().buffered())).use { input ->
                 require(input.readInt() == CACHE_VERSION) { "Unsupported playlist cache." }
                 val name = input.readSizedString()
+                val accountStatus = input.readNullableString()
+                val expiryEpochSeconds = input.readLong().takeIf { it > 0L }
                 val itemCount = input.readInt()
                 require(itemCount in 0..500_000) { "Invalid playlist cache." }
                 val items = ArrayList<PlaylistItem>(itemCount)
@@ -90,7 +92,13 @@ class PlaylistRepository(context: Context) {
                         duration = input.readNullableString()
                     )
                 }
-                LoadedPlaylist(name, items, items.map { it.group }.distinct())
+                LoadedPlaylist(
+                    name = name,
+                    items = items,
+                    groups = items.map { it.group }.distinct(),
+                    accountStatus = accountStatus,
+                    expiryEpochSeconds = expiryEpochSeconds
+                )
             }
         }.getOrNull()
     }
@@ -242,7 +250,15 @@ class PlaylistRepository(context: Context) {
             addAll(seriesItems(JSONArray(download(apiUrl(server, input, "get_series"))), seriesCategories))
         }
         require(items.isNotEmpty()) { "The account connected successfully but contains no available content." }
-        return LoadedPlaylist(input.name.trim(), items, items.map { it.group }.distinct())
+        val expiry = userInfo.optString("exp_date").toLongOrNull()?.takeIf { it > 0L }
+            ?: userInfo.optLong("exp_date", 0L).takeIf { it > 0L }
+        return LoadedPlaylist(
+            name = input.name.trim(),
+            items = items,
+            groups = items.map { it.group }.distinct(),
+            accountStatus = status.takeIf(String::isNotBlank),
+            expiryEpochSeconds = expiry
+        )
     }
 
     private fun categories(url: String): Map<String, String> {
@@ -397,6 +413,8 @@ class PlaylistRepository(context: Context) {
             DataOutputStream(GZIPOutputStream(temporary.outputStream().buffered())).use { output ->
                 output.writeInt(CACHE_VERSION)
                 output.writeSizedString(playlist.name)
+                output.writeNullableString(playlist.accountStatus)
+                output.writeLong(playlist.expiryEpochSeconds ?: 0L)
                 output.writeInt(playlist.items.size)
                 playlist.items.forEach { item ->
                     output.writeSizedString(item.name)
@@ -442,5 +460,5 @@ class PlaylistRepository(context: Context) {
 
     private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
 
-    private companion object { const val CACHE_VERSION = 3 }
+    private companion object { const val CACHE_VERSION = 4 }
 }
