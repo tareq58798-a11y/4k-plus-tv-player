@@ -508,10 +508,12 @@ private fun HomeScreen(
 @Composable
 private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessage: (String) -> Unit) {
     val channels = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.LIVE }.orEmpty() }
-    val categories = remember(channels) { channels.map { it.group }.distinct().sorted() }
+    // Preserve the order supplied by the provider so the first server category
+    // is also the category shown when Live TV opens.
+    val categories = remember(channels) { channels.map { it.group }.distinct() }
     val recentlyWatched = "Recently watched"
     val favorites = "Favorites"
-    var selectedCategory by remember { mutableStateOf(recentlyWatched) }
+    var selectedCategory by remember(playlist) { mutableStateOf(categories.firstOrNull().orEmpty()) }
     var query by remember { mutableStateOf("") }
     var categoryQuery by remember { mutableStateOf("") }
     val context = LocalContext.current
@@ -535,9 +537,11 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
             else -> channels.filter { it.group == selectedCategory }
         }
     }
-    val filtered = remember(categoryChannels, query) {
+    val filtered = remember(channels, categoryChannels, query) {
+        // Channel search is global. The selected category is only applied when
+        // the search box is empty.
         if (query.isBlank()) categoryChannels
-        else categoryChannels.filter { it.name.contains(query.trim(), ignoreCase = true) }
+        else channels.filter { it.name.contains(query.trim(), ignoreCase = true) }
     }
 
     PremiumBackground {

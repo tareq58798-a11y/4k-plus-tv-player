@@ -11,6 +11,7 @@
 - Version 0.3.0 replaces the provider-login-to-M3U shortcut with direct Xtream Codes API authentication and separate live, movie, series, and category loading. It also corrects HTTPS on port 80 and retries common compatible request signatures.
 - Version 0.4.0 adds the first real content browser for Live TV: lazy large-list rendering, category chips, search, channel logos, persistent favorites, empty states, and corrected Series count wording.
 - Version 0.4.1 removes All Channels, puts Recently watched and Favorites first, adds category search, records the 20 most recently selected channels in order, and changes the LIVE status dot to red.
+- Version 0.4.2 opens Live TV on the provider's first category and makes channel and category searches global regardless of the selected category.
 
 ## Product direction
 
