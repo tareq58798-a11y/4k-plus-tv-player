@@ -238,6 +238,11 @@ internal fun SeriesScreen(
                                         seriesItems = sectionItems,
                                         favoriteIds = favoriteIds,
                                         onSeeAll = { selectedCategory = title; view = SeriesView.CATEGORY },
+                                        onHide = if (title in setOf("Continue watching", "Recently watched", "Favorites")) null else {{
+                                            val updated = hiddenCategories + title
+                                            hiddenCategories = updated
+                                            parental.edit().putStringSet("hidden_series_categories", updated).apply()
+                                        }},
                                         onFavorite = ::toggleFavorite,
                                         onSeries = ::openDetails
                                     )
@@ -337,12 +342,18 @@ private fun SeriesShelf(
     seriesItems: List<PlaylistItem>,
     favoriteIds: Set<String>,
     onSeeAll: () -> Unit,
+    onHide: (() -> Unit)?,
     onFavorite: (PlaylistItem) -> Unit,
     onSeries: (PlaylistItem) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(title, Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            onHide?.let {
+                IconButton(onClick = it, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.VisibilityOff, "Hide $title", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             TextButton(onClick = onSeeAll) {
                 Text("See all", color = Cyan)
                 Icon(Icons.Default.ChevronRight, null, tint = Cyan)
