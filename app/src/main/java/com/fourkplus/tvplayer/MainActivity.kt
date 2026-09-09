@@ -1127,7 +1127,7 @@ private fun MoviePlayer(
         Dialog(
             onDismissRequest = onExit,
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) { playerContent(Modifier.fillMaxSize().navigationBarsPadding(), RectangleShape) }
+        ) { playerContent(Modifier.fillMaxSize().navigationBarsPadding().padding(bottom = 56.dp), RectangleShape) }
     } else {
         playerContent(modifier.fillMaxWidth(), RoundedCornerShape(18.dp))
     }
@@ -1813,7 +1813,7 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
         Dialog(
             onDismissRequest = { fullscreen = false },
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) { playerContent(Modifier.fillMaxSize().navigationBarsPadding(), RectangleShape) }
+        ) { playerContent(Modifier.fillMaxSize().navigationBarsPadding().padding(bottom = 56.dp), RectangleShape) }
     } else {
         playerContent(modifier, RoundedCornerShape(18.dp))
     }
