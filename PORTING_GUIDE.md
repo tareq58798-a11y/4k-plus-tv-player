@@ -151,6 +151,8 @@ When porting, preserve category order from the provider rather than alphabetical
 - Playback user-agent: `VLC/3.0.20 LibVLC/3.0.20`.
 - HLS and progressive/transport-stream playback dependencies are included.
 - Player setup is guarded. Synchronous setup problems and asynchronous Media3 errors remain inside the player UI.
+- Live TV and Movie players share fullscreen, embedded-subtitle toggle, external SRT/VTT loading/removal, and configurable 5/10/15/30/60-second seek controls.
+- Subtitle enablement and skip duration are global playback preferences. External subtitle files apply to the current item and are not stored as provider metadata.
 - On TV ports, add D-pad focus states, focus restoration, remote playback controls, and a full-screen player optimized for 10-foot viewing.
 
 ## Build and delivery
@@ -198,7 +200,7 @@ When porting, preserve category order from the provider rather than alphabetical
 - Series browsing/playback is not yet implemented.
 - Series episode API/loading is not yet implemented.
 - EPG is not yet implemented.
-- Full-screen playback and orientation behavior need refinement.
+- Fullscreen playback is implemented for Live TV and Movies; orientation locking and TV-specific fullscreen behavior may still need refinement.
 - Refresh should update provider data and replace the cache without blocking access to cached content.
 - Cache expiration/background refresh policy is not yet defined.
 - Parental controls, external-player fallback, update screen, activation backend, language selection, and final motion/design polish remain pending.

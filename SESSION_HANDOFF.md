@@ -26,6 +26,7 @@ The full cross-device architecture and porting reference is maintained in `PORTI
 - Version 0.8.1 keeps Favorites and Recently watched as permanent movie categories and loads rich movie information on demand from the provider's VOD-details endpoint. The redesigned portrait details page includes a cinematic backdrop, poster, plot, rating, year, genre, duration, cast, director, trailer action, Play/Resume, and favorite control while hiding unavailable or zero-value metadata.
 - Version 0.8.2 makes the trailer action reliable by searching YouTube with the movie title, release year, and “official trailer” instead of blindly opening provider-supplied video IDs that may be stale or unrelated.
 - Version 0.8.3 reads the original Latin-script movie title from provider VOD details when available. English movies can retain their Arabic catalogue title as a subtitle while using the original English title and year for accurate YouTube trailer searches.
+- Version 0.8.4 adds fullscreen playback to the implemented Live TV and Movie players, embedded-subtitle on/off control, external SRT/VTT loading and removal, and a shared 5/10/15/30/60-second skip setting. The shared controls are ready to be reused when Series playback is implemented.
 
 ## Product direction
 
@@ -59,4 +60,4 @@ The current interface is clean but feels too plain. Keep it minimal and easy to 
 
 ## Next step
 
-Build and test version 0.8.0 through GitHub Actions. Verify movie loading, global search, category grids, details, playback, favorites, Recently watched, and resume progress with a real provider account. Series browsing is the next functional milestone; visual refinements remain intentionally deferred.
+Build and test version 0.8.4 through GitHub Actions. Verify fullscreen entry/exit, embedded and external subtitles, and every skip interval in Live TV and Movie playback. Series browsing/playback is the next functional milestone and should reuse the shared controls; visual refinements remain intentionally deferred.

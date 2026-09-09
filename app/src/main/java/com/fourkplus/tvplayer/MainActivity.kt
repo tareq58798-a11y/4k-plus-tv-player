@@ -5,6 +5,8 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
@@ -27,6 +29,7 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.RectangleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
@@ -41,6 +44,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
@@ -55,7 +59,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.media3.common.MediaItem
+import androidx.media3.common.C
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -994,21 +1002,32 @@ private fun MoviePlayer(
     modifier: Modifier
 ) {
     val context = LocalContext.current
+    val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
     var error by remember(movie) { mutableStateOf<String?>(null) }
+    var fullscreen by remember { mutableStateOf(false) }
+    var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
+    var externalSubtitle by remember(movie) { mutableStateOf<Uri?>(null) }
+    var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
     val player = remember(movie.streamUrl) {
         val factory = DefaultHttpDataSource.Factory().setUserAgent("VLC/3.0.20 LibVLC/3.0.20").setAllowCrossProtocolRedirects(true)
         ExoPlayer.Builder(context).setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(factory)).build()
     }
-    LaunchedEffect(player, movie.streamUrl) {
+    LaunchedEffect(player, movie.streamUrl, externalSubtitle) {
         error = null
-        player.setMediaItem(MediaItem.fromUri(movie.streamUrl))
-        if (startPosition > 0L) player.seekTo(startPosition)
+        val resumeAt = player.currentPosition.takeIf { it > 0L } ?: startPosition
+        player.setMediaItem(mediaItemWithSubtitle(context, movie.streamUrl, externalSubtitle))
+        if (resumeAt > 0L) player.seekTo(resumeAt)
         player.prepare()
         player.playWhenReady = true
         while (true) {
             delay(2_000)
             if (player.currentPosition > 0L) onProgress(player.currentPosition, player.duration)
         }
+    }
+    LaunchedEffect(player, subtitlesEnabled) {
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
+            .build()
     }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -1021,11 +1040,30 @@ private fun MoviePlayer(
             player.release()
         }
     }
-    Surface(modifier.fillMaxWidth(), RoundedCornerShape(18.dp), color = Color.Black) {
-        Box(Modifier.fillMaxSize()) {
+    val playerContent: @Composable (Modifier, Shape) -> Unit = { contentModifier, shape ->
+        Surface(contentModifier, shape, color = Color.Black) {
+            Box(Modifier.fillMaxSize()) {
             AndroidView(
                 factory = { PlayerView(it).apply { useController = true; this.player = player } },
                 update = { it.player = player }, modifier = Modifier.fillMaxSize()
+            )
+            PlaybackOptionsOverlay(
+                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                player = player,
+                fullscreen = fullscreen,
+                onFullscreenChange = { fullscreen = it },
+                subtitlesEnabled = subtitlesEnabled,
+                onSubtitlesEnabledChange = {
+                    subtitlesEnabled = it
+                    settings.edit().putBoolean("subtitles_enabled", it).apply()
+                },
+                externalSubtitle = externalSubtitle,
+                onExternalSubtitleChange = { externalSubtitle = it },
+                skipSeconds = skipSeconds,
+                onSkipSecondsChange = {
+                    skipSeconds = it
+                    settings.edit().putInt("skip_seconds", it).apply()
+                }
             )
             error?.let {
                 Surface(Modifier.align(Alignment.Center).padding(20.dp), RoundedCornerShape(12.dp), color = Color.Black.copy(alpha = .84f)) {
@@ -1033,6 +1071,15 @@ private fun MoviePlayer(
                 }
             }
         }
+    }
+    }
+    if (fullscreen) {
+        Dialog(
+            onDismissRequest = { fullscreen = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+        ) { playerContent(Modifier.fillMaxSize(), RectangleShape) }
+    } else {
+        playerContent(modifier.fillMaxWidth(), RoundedCornerShape(18.dp))
     }
 }
 
@@ -1378,9 +1425,110 @@ private fun ChannelPoster(
 }
 
 @Composable
+private fun PlaybackOptionsOverlay(
+    modifier: Modifier = Modifier,
+    player: Player,
+    fullscreen: Boolean,
+    onFullscreenChange: (Boolean) -> Unit,
+    subtitlesEnabled: Boolean,
+    onSubtitlesEnabledChange: (Boolean) -> Unit,
+    externalSubtitle: Uri?,
+    onExternalSubtitleChange: (Uri?) -> Unit,
+    skipSeconds: Int,
+    onSkipSecondsChange: (Int) -> Unit
+) {
+    val context = LocalContext.current
+    var subtitleMenu by remember { mutableStateOf(false) }
+    var skipMenu by remember { mutableStateOf(false) }
+    val subtitlePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) {
+            runCatching { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
+            onExternalSubtitleChange(uri)
+            onSubtitlesEnabledChange(true)
+        }
+    }
+    Surface(
+        modifier = modifier,
+        color = Color.Black.copy(alpha = .68f),
+        shape = RoundedCornerShape(13.dp)
+    ) {
+        Row(Modifier.padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = { player.seekTo((player.currentPosition - skipSeconds * 1_000L).coerceAtLeast(0L)) }) {
+                Text("−${skipSeconds}s", color = Color.White, fontSize = 11.sp)
+            }
+            TextButton(onClick = {
+                val destination = player.currentPosition + skipSeconds * 1_000L
+                player.seekTo(if (player.duration > 0L) destination.coerceAtMost(player.duration) else destination)
+            }) { Text("+${skipSeconds}s", color = Color.White, fontSize = 11.sp) }
+            Box {
+                IconButton(onClick = { subtitleMenu = true }, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Default.Subtitles, "Subtitles", tint = if (subtitlesEnabled) Cyan else Color.White)
+                }
+                DropdownMenu(subtitleMenu, onDismissRequest = { subtitleMenu = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (subtitlesEnabled) "Turn subtitles off" else "Turn subtitles on") },
+                        leadingIcon = { Icon(Icons.Default.Subtitles, null) },
+                        onClick = { onSubtitlesEnabledChange(!subtitlesEnabled); subtitleMenu = false }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Load SRT or VTT file") },
+                        leadingIcon = { Icon(Icons.Default.NoteAdd, null) },
+                        onClick = {
+                            subtitleMenu = false
+                            subtitlePicker.launch(arrayOf("application/x-subrip", "text/vtt", "text/plain", "application/octet-stream"))
+                        }
+                    )
+                    if (externalSubtitle != null) {
+                        DropdownMenuItem(
+                            text = { Text("Remove external subtitles") },
+                            leadingIcon = { Icon(Icons.Default.DeleteOutline, null) },
+                            onClick = { onExternalSubtitleChange(null); subtitleMenu = false }
+                        )
+                    }
+                }
+            }
+            Box {
+                IconButton(onClick = { skipMenu = true }, modifier = Modifier.size(38.dp)) {
+                    Icon(Icons.Default.MoreTime, "Skip interval", tint = Color.White)
+                }
+                DropdownMenu(skipMenu, onDismissRequest = { skipMenu = false }) {
+                    listOf(5, 10, 15, 30, 60).forEach { seconds ->
+                        DropdownMenuItem(
+                            text = { Text("Skip $seconds seconds") },
+                            leadingIcon = { if (seconds == skipSeconds) Icon(Icons.Default.Check, null) },
+                            onClick = { onSkipSecondsChange(seconds); skipMenu = false }
+                        )
+                    }
+                }
+            }
+            IconButton(onClick = { onFullscreenChange(!fullscreen) }, modifier = Modifier.size(38.dp)) {
+                Icon(if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
+            }
+        }
+    }
+}
+
+private fun mediaItemWithSubtitle(context: android.content.Context, streamUrl: String, subtitle: Uri?): MediaItem {
+    val builder = MediaItem.Builder().setUri(streamUrl)
+    if (subtitle != null) {
+        val detected = context.contentResolver.getType(subtitle).orEmpty()
+        val mime = if (detected.contains("vtt", true)) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
+        builder.setSubtitleConfigurations(
+            listOf(MediaItem.SubtitleConfiguration.Builder(subtitle).setMimeType(mime).setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build())
+        )
+    }
+    return builder.build()
+}
+
+@Composable
 private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
     var playbackError by remember { mutableStateOf<String?>(null) }
+    var fullscreen by remember { mutableStateOf(false) }
+    var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
+    var externalSubtitle by remember(channel?.streamUrl) { mutableStateOf<Uri?>(null) }
+    var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
     val player = remember {
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.20 LibVLC/3.0.20")
@@ -1391,13 +1539,13 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
             .apply { playWhenReady = true }
     }
 
-    LaunchedEffect(channel?.streamUrl) {
+    LaunchedEffect(channel?.streamUrl, externalSubtitle) {
         playbackError = null
         if (channel == null) {
             player.clearMediaItems()
         } else {
             runCatching {
-                player.setMediaItem(MediaItem.fromUri(channel.streamUrl))
+                player.setMediaItem(mediaItemWithSubtitle(context, channel.streamUrl, externalSubtitle))
                 player.prepare()
                 player.play()
             }.onFailure {
@@ -1405,6 +1553,11 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                 player.clearMediaItems()
             }
         }
+    }
+    LaunchedEffect(player, subtitlesEnabled) {
+        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !subtitlesEnabled)
+            .build()
     }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -1419,13 +1572,9 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
         }
     }
 
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(18.dp),
-        color = Color.Black,
-        shadowElevation = 8.dp
-    ) {
-        Box(Modifier.fillMaxSize()) {
+    val playerContent: @Composable (Modifier, Shape) -> Unit = { contentModifier, shape ->
+        Surface(modifier = contentModifier, shape = shape, color = Color.Black, shadowElevation = 8.dp) {
+            Box(Modifier.fillMaxSize()) {
             if (channel == null) {
                 Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.LiveTv, null, tint = Cyan, modifier = Modifier.size(34.dp))
@@ -1437,6 +1586,24 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                     factory = { PlayerView(it).apply { useController = true; this.player = player } },
                     update = { it.player = player },
                     modifier = Modifier.fillMaxSize()
+                )
+                PlaybackOptionsOverlay(
+                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                    player = player,
+                    fullscreen = fullscreen,
+                    onFullscreenChange = { fullscreen = it },
+                    subtitlesEnabled = subtitlesEnabled,
+                    onSubtitlesEnabledChange = {
+                        subtitlesEnabled = it
+                        settings.edit().putBoolean("subtitles_enabled", it).apply()
+                    },
+                    externalSubtitle = externalSubtitle,
+                    onExternalSubtitleChange = { externalSubtitle = it },
+                    skipSeconds = skipSeconds,
+                    onSkipSecondsChange = {
+                        skipSeconds = it
+                        settings.edit().putInt("skip_seconds", it).apply()
+                    }
                 )
                 Surface(
                     modifier = Modifier.align(Alignment.BottomStart).padding(10.dp),
@@ -1461,6 +1628,15 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                 }
             }
         }
+    }
+    }
+    if (fullscreen) {
+        Dialog(
+            onDismissRequest = { fullscreen = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+        ) { playerContent(Modifier.fillMaxSize(), RectangleShape) }
+    } else {
+        playerContent(modifier, RoundedCornerShape(18.dp))
     }
 }
 
