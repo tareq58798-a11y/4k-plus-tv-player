@@ -1,5 +1,7 @@
 # 4K Plus TV Player — Session Handoff
 
+The full cross-device architecture and porting reference is maintained in `PORTING_GUIDE.md`.
+
 ## Current state
 
 - Native Android project using Kotlin and Jetpack Compose.
@@ -19,6 +21,7 @@
 - Version 0.6.2 hardens Live TV against provider data and stream failures: list rendering no longer assumes channel IDs are unique, and preview setup/player errors are contained and shown inside the preview rather than closing the app.
 - Version 0.7.0 securely restores the saved playlist at launch, keeps an auto-playing preview on category pages, starts each category with its first channel, resets inaccurate legacy history, records only deliberate selections, and lets the player switch between the current category and Recently watched.
 - Version 0.7.1 adds a compressed on-device playlist cache. After the first successful load creates it, later launches open the dashboard from local data immediately instead of downloading the full provider library again.
+- Version 0.7.2 fixes Recently watched using each provider channel's unique stream ID instead of a potentially blank or shared EPG ID. It resets the corrupted v2 history and rebuilds the playlist cache once with corrected channel identities.
 
 ## Product direction
 

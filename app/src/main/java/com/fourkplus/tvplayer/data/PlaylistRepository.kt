@@ -140,7 +140,10 @@ class PlaylistRepository(context: Context) {
                 "$server/live/${encode(input.username)}/${encode(input.password)}/$id.ts",
                 groups[item.optString("category_id")] ?: "Other",
                 item.optString("stream_icon").takeIf(String::isNotBlank),
-                item.optString("epg_channel_id").takeIf(String::isNotBlank),
+                // stream_id is the provider's unique channel identity. EPG IDs
+                // may be blank or shared by several streams and must not be
+                // used for favorites or viewing history.
+                id,
                 MediaKind.LIVE
             ))
         }
@@ -299,5 +302,5 @@ class PlaylistRepository(context: Context) {
 
     private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
 
-    private companion object { const val CACHE_VERSION = 1 }
+    private companion object { const val CACHE_VERSION = 2 }
 }

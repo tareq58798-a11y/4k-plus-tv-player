@@ -567,9 +567,9 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
     val store = remember { context.getSharedPreferences("favorite_channels", android.content.Context.MODE_PRIVATE) }
     var favoriteIds by remember { mutableStateOf(store.getStringSet("ids", emptySet()).orEmpty().toSet()) }
     var recentIds by remember {
-        // v2 intentionally starts clean because older versions could record an
-        // automatically previewed channel as if the user had watched it.
-        mutableStateOf(store.getString("recent_ids_v2", "").orEmpty().split('\u001F').filter(String::isNotBlank))
+        // v3 starts clean because v2 provider history used non-unique EPG IDs,
+        // which could collapse many watched channels into one unrelated item.
+        mutableStateOf(store.getString("recent_ids_v3", "").orEmpty().split('\u001F').filter(String::isNotBlank))
     }
     val channelByKey = remember(channels) { channels.associateBy(::channelKey) }
     val recentChannels = remember(channelByKey, recentIds) { recentIds.mapNotNull(channelByKey::get) }
@@ -604,7 +604,7 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
         val key = channelKey(channel)
         val updated = (listOf(key) + recentIds.filterNot { it == key }).take(20)
         recentIds = updated
-        store.edit().putString("recent_ids_v2", updated.joinToString("\u001F")).apply()
+        store.edit().putString("recent_ids_v3", updated.joinToString("\u001F")).apply()
     }
     fun toggleFavorite(channel: PlaylistItem) {
         val key = channelKey(channel)
