@@ -1099,7 +1099,9 @@ private fun MoviePlayer(
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                 player = player,
                 fullscreen = fullscreen,
-                onFullscreenChange = { fullscreen = it },
+                onFullscreenChange = { enabled ->
+                    if (enabled) fullscreen = true else onExit()
+                },
                 subtitlesEnabled = subtitlesEnabled,
                 onSubtitlesEnabledChange = {
                     subtitlesEnabled = it
@@ -1768,9 +1770,7 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                     modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                     player = player,
                     fullscreen = fullscreen,
-                    onFullscreenChange = { enabled ->
-                     if (enabled) fullscreen = true else onExit()
-                 },
+                    onFullscreenChange = { fullscreen = it },
                     subtitlesEnabled = subtitlesEnabled,
                     onSubtitlesEnabledChange = {
                         subtitlesEnabled = it
