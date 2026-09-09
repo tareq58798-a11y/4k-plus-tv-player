@@ -6,6 +6,7 @@
 - Repository: `tareq58798-a11y/4k-plus-tv-player` (private GitHub repository).
 - GitHub Actions successfully builds a debug APK using Java 17.
 - Latest local commit includes the supplied 4K Plus TV logo, safer screen-edge spacing, and touch feedback.
+- The next functional milestone adds real M3U/provider connection testing, playlist parsing, encrypted source storage, loading/error handling, and real content counts on Home.
 
 ## Product direction
 
@@ -39,4 +40,4 @@ The current interface is clean but feels too plain. Keep it minimal and easy to 
 
 ## Next step
 
-Build and test the premium UI update through GitHub Actions on a real Android phone in portrait and landscape. Collect screenshots and usability notes, then refine the visual pass before expanding functional playlist parsing and playback logic.
+Build and test version 0.2.0 through GitHub Actions. Verify a real M3U URL and provider login, confirm loading/errors and Home counts, then add content browsing screens and Media3 playback after the ingestion path is stable. Visual refinements remain intentionally deferred.

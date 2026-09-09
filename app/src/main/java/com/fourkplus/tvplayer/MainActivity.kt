@@ -35,6 +35,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -44,6 +45,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fourkplus.tvplayer.ui.theme.*
+import com.fourkplus.tvplayer.data.LoadedPlaylist
+import com.fourkplus.tvplayer.data.PlaylistInput
+import com.fourkplus.tvplayer.data.PlaylistKind
+import com.fourkplus.tvplayer.data.PlaylistRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -70,6 +75,9 @@ private fun App() {
 
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val playlistRepository = remember { PlaylistRepository(context.applicationContext) }
+    var loadedPlaylist by remember { mutableStateOf<LoadedPlaylist?>(null) }
     val message: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
 
     FourKPlusTheme(darkTheme = useDark) {
@@ -88,9 +96,18 @@ private fun App() {
                 )
                 Screen.MANUAL -> ManualPlaylistScreen(
                     onBack = { screen = Screen.ACTIVATION },
-                    onConnected = { screen = Screen.HOME }
+                    loadPlaylist = playlistRepository::load,
+                    onConnected = {
+                        loadedPlaylist = it
+                        screen = Screen.HOME
+                        message("${it.items.size} items loaded")
+                    }
                 )
-                Screen.HOME -> HomeScreen(onManage = { screen = Screen.ACTIVATION }, onMessage = message)
+                Screen.HOME -> HomeScreen(
+                    playlist = loadedPlaylist,
+                    onManage = { screen = Screen.ACTIVATION },
+                    onMessage = message
+                )
             }
             }
         }
@@ -318,12 +335,19 @@ private fun ManualEntryCard(modifier: Modifier, onManual: () -> Unit) {
 }
 
 @Composable
-private fun ManualPlaylistScreen(onBack: () -> Unit, onConnected: () -> Unit) {
+private fun ManualPlaylistScreen(
+    onBack: () -> Unit,
+    loadPlaylist: suspend (PlaylistInput) -> Result<LoadedPlaylist>,
+    onConnected: (LoadedPlaylist) -> Unit
+) {
     var tab by remember { mutableIntStateOf(0) }
     var name by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var loading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val landscape = maxWidth > maxHeight
         Column(
@@ -358,17 +382,55 @@ private fun ManualPlaylistScreen(onBack: () -> Unit, onConnected: () -> Unit) {
             }
         }
         Text("Your details are stored securely on this device.", style = MaterialTheme.typography.bodySmall)
+        AnimatedVisibility(error != null) {
+            Surface(
+                color = MaterialTheme.colorScheme.errorContainer,
+                contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.ErrorOutline, null)
+                    Spacer(Modifier.width(10.dp))
+                    Text(error.orEmpty(), modifier = Modifier.weight(1f))
+                }
+            }
+        }
+        AnimatedVisibility(loading) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+                Text("Connecting and organizing your playlist…", style = MaterialTheme.typography.bodySmall)
+            }
+        }
         Button(
-            onClick = onConnected,
-            enabled = name.isNotBlank() && address.isNotBlank() && (tab == 0 || username.isNotBlank() && password.isNotBlank()),
+            onClick = {
+                loading = true
+                error = null
+                val input = PlaylistInput(
+                    name = name,
+                    kind = if (tab == 0) PlaylistKind.M3U_URL else PlaylistKind.PROVIDER_LOGIN,
+                    address = address,
+                    username = username,
+                    password = password
+                )
+                scope.launch {
+                    loadPlaylist(input)
+                        .onSuccess(onConnected)
+                        .onFailure { error = it.message ?: "The playlist could not be loaded." }
+                    loading = false
+                }
+            },
+            enabled = !loading && name.isNotBlank() && address.isNotBlank() && (tab == 0 || username.isNotBlank() && password.isNotBlank()),
             modifier = Modifier.fillMaxWidth().height(52.dp)
-        ) { Text("Test and Add Playlist") }
+        ) {
+            if (loading) CircularProgressIndicator(Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+            else Text("Test and Add Playlist")
+        }
         }
     }
 }
 
 @Composable
-private fun HomeScreen(onManage: () -> Unit, onMessage: (String) -> Unit) {
+private fun HomeScreen(playlist: LoadedPlaylist?, onManage: () -> Unit, onMessage: (String) -> Unit) {
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
     PremiumBackground {
@@ -384,7 +446,10 @@ private fun HomeScreen(onManage: () -> Unit, onMessage: (String) -> Unit) {
             }
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text("Good evening", fontSize = 30.sp, fontWeight = FontWeight.Black)
-                Text("What would you like to watch?", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    playlist?.let { "${it.name} • ${it.items.size} items ready" } ?: "What would you like to watch?",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
             AnimatedVisibility(
                 visible = visible,
@@ -392,15 +457,15 @@ private fun HomeScreen(onManage: () -> Unit, onMessage: (String) -> Unit) {
             ) { ContinueCard { onMessage("Nothing to continue yet") } }
             if (landscape) {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    HomeTile("Live TV", "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.weight(1f)) { onMessage("Live TV opens after a playlist is loaded") }
-                    HomeTile("Movies", "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f)) { onMessage("Movies open after a playlist is loaded") }
-                    HomeTile("Series", "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series open after a playlist is loaded") }
+                    HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.weight(1f)) { onMessage("Live TV browsing is the next milestone") }
+                    HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f)) { onMessage("Movie browsing is the next milestone") }
+                    HomeTile("Series", playlist?.let { "${it.seriesCount} episodes" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series browsing is the next milestone") }
                 }
             } else {
-                HomeTile("Live TV", "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.fillMaxWidth()) { onMessage("Live TV opens after a playlist is loaded") }
+                HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.fillMaxWidth()) { onMessage("Live TV browsing is the next milestone") }
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    HomeTile("Movies", "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f)) { onMessage("Movies open after a playlist is loaded") }
-                    HomeTile("Series", "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series open after a playlist is loaded") }
+                    HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f)) { onMessage("Movie browsing is the next milestone") }
+                    HomeTile("Series", playlist?.let { "${it.seriesCount} episodes" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f)) { onMessage("Series browsing is the next milestone") }
                 }
             }
             Text("Quick access", fontSize = 20.sp, fontWeight = FontWeight.Bold)

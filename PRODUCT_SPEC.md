@@ -19,7 +19,7 @@ advertising or payments.
 - System, branded light and branded dark themes.
 - Full portrait and landscape support on every screen.
 - Home sections: Live TV, Movies, Series, Continue Watching, Favorites,
-  Recently Watched, Playlists and Support.
+  Recently Watched and Playlists.
 - Live TV: categories, channel list, live preview, EPG when available.
 - VOD: poster browsing, clear details, watch/resume, seasons and episode cards.
 - Player: subtitles, audio, aspect ratio, screen lock, PiP, gestures, smart retry,
