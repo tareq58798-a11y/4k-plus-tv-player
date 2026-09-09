@@ -39,6 +39,7 @@ import com.fourkplus.tvplayer.data.MediaKind
 import com.fourkplus.tvplayer.data.PlaylistItem
 import com.fourkplus.tvplayer.data.SeriesDetailsInfo
 import com.fourkplus.tvplayer.data.SeriesEpisode
+import com.fourkplus.tvplayer.ui.theme.*
 
 private enum class SeriesView { BROWSE, CATEGORY, DETAILS, PLAYER }
 
