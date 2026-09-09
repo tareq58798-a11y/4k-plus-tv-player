@@ -18,6 +18,7 @@
 - Version 0.6.1 fixes the category-grid ChannelPoster argument mapping that caused the v0.6.0 Kotlin compilation failure.
 - Version 0.6.2 hardens Live TV against provider data and stream failures: list rendering no longer assumes channel IDs are unique, and preview setup/player errors are contained and shown inside the preview rather than closing the app.
 - Version 0.7.0 securely restores the saved playlist at launch, keeps an auto-playing preview on category pages, starts each category with its first channel, resets inaccurate legacy history, records only deliberate selections, and lets the player switch between the current category and Recently watched.
+- Version 0.7.1 adds a compressed on-device playlist cache. After the first successful load creates it, later launches open the dashboard from local data immediately instead of downloading the full provider library again.
 
 ## Product direction
 

@@ -99,19 +99,25 @@ private fun App() {
     val message: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
 
     LaunchedEffect(Unit) {
-        val savedSource = playlistRepository.savedSource()
-        if (savedSource == null) {
-            screen = Screen.ACTIVATION
+        val cachedPlaylist = playlistRepository.loadCached()
+        if (cachedPlaylist != null) {
+            loadedPlaylist = cachedPlaylist
+            screen = Screen.HOME
         } else {
-            playlistRepository.load(savedSource)
-                .onSuccess {
-                    loadedPlaylist = it
-                    screen = Screen.HOME
-                }
-                .onFailure {
-                    screen = Screen.ACTIVATION
-                    message("Saved playlist could not be refreshed. Please reconnect.")
-                }
+            val savedSource = playlistRepository.savedSource()
+            if (savedSource == null) {
+                screen = Screen.ACTIVATION
+            } else {
+                playlistRepository.load(savedSource)
+                    .onSuccess {
+                        loadedPlaylist = it
+                        screen = Screen.HOME
+                    }
+                    .onFailure {
+                        screen = Screen.ACTIVATION
+                        message("Saved playlist could not be refreshed. Please reconnect.")
+                    }
+            }
         }
     }
 

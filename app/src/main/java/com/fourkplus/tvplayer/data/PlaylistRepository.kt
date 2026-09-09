@@ -4,18 +4,24 @@ import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import java.io.BufferedReader
+import java.io.DataInputStream
+import java.io.DataOutputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.SocketException
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.zip.GZIPInputStream
+import java.util.zip.GZIPOutputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
 class PlaylistRepository(context: Context) {
+    private val appContext = context.applicationContext
+    private val cacheFile = appContext.filesDir.resolve("playlist_cache_v1.bin.gz")
     private val preferences = EncryptedSharedPreferences.create(
         context, "playlist_source",
         MasterKey.Builder(context).setKeyScheme(MasterKey.KeyScheme.AES256_GCM).build(),
@@ -30,6 +36,7 @@ class PlaylistRepository(context: Context) {
                 PlaylistKind.PROVIDER_LOGIN -> loadProvider(input)
             }
             saveSource(input)
+            saveCache(playlist)
             playlist
         }.recoverCatching { throw friendlyError(it) }
     }
@@ -47,6 +54,30 @@ class PlaylistRepository(context: Context) {
             username = preferences.getString("username", "").orEmpty(),
             password = preferences.getString("password", "").orEmpty()
         )
+    }
+
+    suspend fun loadCached(): LoadedPlaylist? = withContext(Dispatchers.IO) {
+        runCatching {
+            if (!cacheFile.exists()) return@runCatching null
+            DataInputStream(GZIPInputStream(cacheFile.inputStream().buffered())).use { input ->
+                require(input.readInt() == CACHE_VERSION) { "Unsupported playlist cache." }
+                val name = input.readSizedString()
+                val itemCount = input.readInt()
+                require(itemCount in 0..500_000) { "Invalid playlist cache." }
+                val items = ArrayList<PlaylistItem>(itemCount)
+                repeat(itemCount) {
+                    items += PlaylistItem(
+                        name = input.readSizedString(),
+                        streamUrl = input.readSizedString(),
+                        group = input.readSizedString(),
+                        logoUrl = input.readNullableString(),
+                        channelId = input.readNullableString(),
+                        kind = MediaKind.valueOf(input.readSizedString())
+                    )
+                }
+                LoadedPlaylist(name, items, items.map { it.group }.distinct())
+            }
+        }.getOrNull()
     }
 
     private fun loadM3u(input: PlaylistInput): LoadedPlaylist {
@@ -221,5 +252,52 @@ class PlaylistRepository(context: Context) {
             .putString("password", input.password).apply()
     }
 
+    private fun saveCache(playlist: LoadedPlaylist) {
+        val temporary = appContext.filesDir.resolve("playlist_cache_v1.tmp")
+        runCatching {
+            DataOutputStream(GZIPOutputStream(temporary.outputStream().buffered())).use { output ->
+                output.writeInt(CACHE_VERSION)
+                output.writeSizedString(playlist.name)
+                output.writeInt(playlist.items.size)
+                playlist.items.forEach { item ->
+                    output.writeSizedString(item.name)
+                    output.writeSizedString(item.streamUrl)
+                    output.writeSizedString(item.group)
+                    output.writeNullableString(item.logoUrl)
+                    output.writeNullableString(item.channelId)
+                    output.writeSizedString(item.kind.name)
+                }
+            }
+            if (!temporary.renameTo(cacheFile)) {
+                temporary.copyTo(cacheFile, overwrite = true)
+                temporary.delete()
+            }
+        }.onFailure { temporary.delete() }
+    }
+
+    private fun DataOutputStream.writeSizedString(value: String) {
+        val bytes = value.toByteArray(StandardCharsets.UTF_8)
+        writeInt(bytes.size)
+        write(bytes)
+    }
+
+    private fun DataOutputStream.writeNullableString(value: String?) {
+        writeBoolean(value != null)
+        if (value != null) writeSizedString(value)
+    }
+
+    private fun DataInputStream.readSizedString(): String {
+        val size = readInt()
+        require(size in 0..2_000_000) { "Invalid cached text." }
+        val bytes = ByteArray(size)
+        readFully(bytes)
+        return String(bytes, StandardCharsets.UTF_8)
+    }
+
+    private fun DataInputStream.readNullableString(): String? =
+        if (readBoolean()) readSizedString() else null
+
     private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
+
+    private companion object { const val CACHE_VERSION = 1 }
 }
