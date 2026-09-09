@@ -13,6 +13,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -1008,6 +1009,13 @@ private fun MoviePlayer(
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(movie) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
+    var seekFeedback by remember { mutableStateOf<Pair<Boolean, Long>?>(null) }
+    LaunchedEffect(seekFeedback?.second) {
+        if (seekFeedback != null) {
+            delay(650)
+            seekFeedback = null
+        }
+    }
     val player = remember(movie.streamUrl, skipSeconds) {
         val factory = DefaultHttpDataSource.Factory().setUserAgent("VLC/3.0.20 LibVLC/3.0.20").setAllowCrossProtocolRedirects(true)
         ExoPlayer.Builder(context)
@@ -1055,14 +1063,28 @@ private fun MoviePlayer(
                     PlayerView(it).apply {
                         useController = true
                         this.player = player
-                        installDoubleTapSeek(this, player, skipSeconds)
+                        installDoubleTapSeek(this, player, skipSeconds) { forward ->
+                            seekFeedback = forward to System.nanoTime()
+                        }
                     }
                 },
                 update = {
                     it.player = player
-                    installDoubleTapSeek(it, player, skipSeconds)
+                    installDoubleTapSeek(it, player, skipSeconds) { forward ->
+                        seekFeedback = forward to System.nanoTime()
+                    }
                 }, modifier = Modifier.fillMaxSize()
             )
+            seekFeedback?.let { feedback ->
+                DoubleTapSeekFeedback(
+                    forward = feedback.first,
+                    seconds = skipSeconds,
+                    eventId = feedback.second,
+                    modifier = Modifier
+                        .align(if (feedback.first) Alignment.CenterEnd else Alignment.CenterStart)
+                        .padding(horizontal = 34.dp)
+                )
+            }
             PlaybackOptionsOverlay(
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                 player = player,
@@ -1440,7 +1462,55 @@ private fun ChannelPoster(
     }
 }
 
-private fun installDoubleTapSeek(view: PlayerView, player: Player, skipSeconds: Int) {
+@Composable
+private fun DoubleTapSeekFeedback(
+    forward: Boolean,
+    seconds: Int,
+    eventId: Long,
+    modifier: Modifier = Modifier
+) {
+    val movement = remember(eventId) { Animatable(0f) }
+    LaunchedEffect(eventId) {
+        movement.animateTo(1f, animationSpec = tween(480))
+    }
+    Surface(
+        modifier = modifier.graphicsLayer {
+            translationX = (if (forward) 1f else -1f) * movement.value * 22f
+            alpha = 1f - movement.value * .35f
+        },
+        color = Color.Black.copy(alpha = .55f),
+        shape = RoundedCornerShape(22.dp)
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (!forward) {
+                Text("−${seconds}s", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                Spacer(Modifier.width(3.dp))
+            }
+            repeat(3) {
+                Icon(
+                    if (forward) Icons.Default.ChevronRight else Icons.Default.ChevronLeft,
+                    null,
+                    tint = Color.White,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            if (forward) {
+                Spacer(Modifier.width(3.dp))
+                Text("+${seconds}s", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            }
+        }
+    }
+}
+
+private fun installDoubleTapSeek(
+    view: PlayerView,
+    player: Player,
+    skipSeconds: Int,
+    onSeekFeedback: (Boolean) -> Unit
+) {
     val detector = android.view.GestureDetector(
         view.context,
         object : android.view.GestureDetector.SimpleOnGestureListener() {
@@ -1455,7 +1525,10 @@ private fun installDoubleTapSeek(view: PlayerView, player: Player, skipSeconds: 
                     val forward = player.currentPosition + intervalMs
                     if (player.duration > 0L) forward.coerceAtMost(player.duration) else forward
                 }
+                val forward = event.x >= view.width / 2f
                 player.seekTo(destination)
+                view.hideController()
+                onSeekFeedback(forward)
                 return true
             }
         }
@@ -1580,6 +1653,13 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(channel?.streamUrl) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
+    var seekFeedback by remember { mutableStateOf<Pair<Boolean, Long>?>(null) }
+    LaunchedEffect(seekFeedback?.second) {
+        if (seekFeedback != null) {
+            delay(650)
+            seekFeedback = null
+        }
+    }
     val player = remember(skipSeconds) {
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.20 LibVLC/3.0.20")
@@ -1645,15 +1725,29 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                         PlayerView(it).apply {
                             useController = true
                             this.player = player
-                            installDoubleTapSeek(this, player, skipSeconds)
+                            installDoubleTapSeek(this, player, skipSeconds) { forward ->
+                            seekFeedback = forward to System.nanoTime()
+                        }
                         }
                     },
                     update = {
                         it.player = player
-                        installDoubleTapSeek(it, player, skipSeconds)
+                        installDoubleTapSeek(it, player, skipSeconds) { forward ->
+                        seekFeedback = forward to System.nanoTime()
+                    }
                     },
                     modifier = Modifier.fillMaxSize()
                 )
+                seekFeedback?.let { feedback ->
+                    DoubleTapSeekFeedback(
+                        forward = feedback.first,
+                        seconds = skipSeconds,
+                        eventId = feedback.second,
+                        modifier = Modifier
+                            .align(if (feedback.first) Alignment.CenterEnd else Alignment.CenterStart)
+                            .padding(horizontal = 34.dp)
+                    )
+                }
                 PlaybackOptionsOverlay(
                     modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                     player = player,
