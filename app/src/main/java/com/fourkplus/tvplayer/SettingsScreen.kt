@@ -376,7 +376,7 @@ internal fun SettingsScreen(
 
             item {
                 Text(
-                    "4K Plus TV Player • v0.10.4",
+                    "4K Plus TV Player • v0.10.5",
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
