@@ -4,7 +4,9 @@
 
     <application
         android:allowBackup="true"
+        android:icon="@drawable/logo_4k_plus_tv"
         android:label="4K Plus TV Player"
+        android:roundIcon="@drawable/logo_4k_plus_tv"
         android:supportsRtl="true"
         android:theme="@style/Theme.FourKPlus">
         <activity
