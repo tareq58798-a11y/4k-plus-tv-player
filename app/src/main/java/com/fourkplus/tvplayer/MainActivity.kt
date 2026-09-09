@@ -1085,7 +1085,7 @@ private fun MoviePlayer(
                         .padding(horizontal = 34.dp)
                 )
             }
-            PlaybackOptionsOverlay(
+            if (seekFeedback == null) PlaybackOptionsOverlay(
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                 player = player,
                 fullscreen = fullscreen,
@@ -1527,7 +1527,7 @@ private fun installDoubleTapSeek(
                 }
                 val forward = event.x >= view.width / 2f
                 player.seekTo(destination)
-                view.hideController()
+                view.postDelayed({ view.hideController() }, 80L)
                 onSeekFeedback(forward)
                 return true
             }
@@ -1748,7 +1748,7 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                             .padding(horizontal = 34.dp)
                     )
                 }
-                PlaybackOptionsOverlay(
+                if (seekFeedback == null) PlaybackOptionsOverlay(
                     modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                     player = player,
                     fullscreen = fullscreen,
