@@ -34,3 +34,16 @@ data class LoadedPlaylist(
     val movieCount: Int get() = items.count { it.kind == MediaKind.MOVIE }
     val seriesCount: Int get() = items.count { it.kind == MediaKind.SERIES }
 }
+
+data class MovieDetailsInfo(
+    val description: String? = null,
+    val year: String? = null,
+    val rating: String? = null,
+    val duration: String? = null,
+    val genre: String? = null,
+    val cast: String? = null,
+    val director: String? = null,
+    val backdropUrl: String? = null,
+    val posterUrl: String? = null,
+    val trailerUrl: String? = null
+)

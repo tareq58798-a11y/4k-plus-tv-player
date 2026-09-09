@@ -23,6 +23,7 @@ The full cross-device architecture and porting reference is maintained in `PORTI
 - Version 0.7.1 adds a compressed on-device playlist cache. After the first successful load creates it, later launches open the dashboard from local data immediately instead of downloading the full provider library again.
 - Version 0.7.2 fixes Recently watched using each provider channel's unique stream ID instead of a potentially blank or shared EPG ID. It resets the corrupted v2 history and rebuilds the playlist cache once with corrected channel identities.
 - Version 0.8.0 adds the Movies experience: category shelves and See all grids, global movie search, provider metadata, poster/details pages, favorites, recently watched, Continue watching, full Media3 playback, saved resume positions, and system-back navigation. Cache v3 stores the new movie metadata.
+- Version 0.8.1 keeps Favorites and Recently watched as permanent movie categories and loads rich movie information on demand from the provider's VOD-details endpoint. The redesigned portrait details page includes a cinematic backdrop, poster, plot, rating, year, genre, duration, cast, director, trailer action, Play/Resume, and favorite control while hiding unavailable or zero-value metadata.
 
 ## Product direction
 

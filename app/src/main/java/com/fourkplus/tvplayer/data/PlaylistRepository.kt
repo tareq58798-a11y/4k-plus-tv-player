@@ -84,6 +84,44 @@ class PlaylistRepository(context: Context) {
         }.getOrNull()
     }
 
+    suspend fun movieDetails(movie: PlaylistItem): Result<MovieDetailsInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            val source = savedSource() ?: throw IllegalArgumentException("No saved provider is available.")
+            val movieId = movie.channelId
+            require(source.kind == PlaylistKind.PROVIDER_LOGIN && !movieId.isNullOrBlank()) {
+                "Detailed information is not available for this playlist."
+            }
+            var lastError: Exception? = null
+            for (server in addressCandidates(source.address).map(::normalizeServerBase)) {
+                try {
+                    val root = JSONObject(download(apiUrl(server, source, "get_vod_info") + "&vod_id=${encode(movieId)}"))
+                    val info = root.optJSONObject("info") ?: root
+                    val movieData = root.optJSONObject("movie_data")
+                    val backdrop = info.optJSONArray("backdrop_path")?.let { array ->
+                        (0 until array.length()).asSequence().map { array.optString(it) }.firstOrNull(String::isNotBlank)
+                    } ?: info.optString("backdrop_path").takeIf { it.startsWith("http", true) }
+                    val trailer = info.optString("youtube_trailer").takeIf(String::isNotBlank)?.let { value ->
+                        if (value.startsWith("http", true)) value else "https://www.youtube.com/watch?v=$value"
+                    }
+                    return@runCatching MovieDetailsInfo(
+                        description = firstText(info, "plot", "description"),
+                        year = firstText(info, "year", "releasedate", "releaseDate")?.take(4),
+                        rating = firstText(info, "rating")?.takeUnless { it == "0" || it == "0.0" },
+                        duration = firstText(info, "duration", "duration_secs"),
+                        genre = firstText(info, "genre"),
+                        cast = firstText(info, "cast", "actors"),
+                        director = firstText(info, "director"),
+                        backdropUrl = backdrop,
+                        posterUrl = firstText(info, "movie_image", "cover_big", "cover")
+                            ?: movieData?.optString("stream_icon")?.takeIf(String::isNotBlank),
+                        trailerUrl = trailer
+                    )
+                } catch (error: Exception) { lastError = error }
+            }
+            throw lastError ?: IllegalArgumentException("Movie information could not be loaded.")
+        }.recoverCatching { throw friendlyError(it) }
+    }
+
     private fun loadM3u(input: PlaylistInput): LoadedPlaylist {
         var lastError: Exception? = null
         for (address in addressCandidates(input.address)) {
@@ -191,6 +229,10 @@ class PlaylistRepository(context: Context) {
         append("&password=").append(encode(input.password))
         if (action != null) append("&action=").append(action)
     }
+
+    private fun firstText(objectValue: JSONObject, vararg keys: String): String? =
+        keys.asSequence().map { objectValue.optString(it).trim() }
+            .firstOrNull { it.isNotBlank() && !it.equals("null", true) }
 
     private fun normalizeServerBase(value: String): String {
         val uri = URI(value)
