@@ -169,6 +169,32 @@ internal fun SeriesScreen(
         )
     ) {
         val landscape = maxWidth > maxHeight
+        if (landscape && view in setOf(SeriesView.BROWSE, SeriesView.CATEGORY)) {
+            LandscapeSeriesBrowser(
+                seriesItems = seriesItems,
+                categories = categories,
+                selectedCategory = selectedCategory,
+                search = search,
+                favoriteIds = favoriteIds,
+                recent = recent,
+                favorites = favorites,
+                continueWatching = continueWatching,
+                onCategory = { selectedCategory = it; search = ""; view = SeriesView.CATEGORY },
+                onSearch = { search = it },
+                onFavorite = ::toggleFavorite,
+                onSeries = ::openDetails,
+                onHide = { category ->
+                    val updated = hiddenCategories + category
+                    hiddenCategories = updated
+                    parental.edit().putStringSet("hidden_series_categories", updated).apply()
+                    selectedCategory = categories.firstOrNull { it != category }.orEmpty()
+                },
+                onBack = {
+                    if (view == SeriesView.CATEGORY) view = SeriesView.BROWSE else onBack()
+                }
+            )
+            return@BoxWithConstraints
+        }
         Column(
             Modifier.fillMaxSize().padding(horizontal = if (landscape) 34.dp else 18.dp, vertical = 14.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -314,6 +340,77 @@ internal fun SeriesScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun LandscapeSeriesBrowser(
+    seriesItems: List<PlaylistItem>,
+    categories: List<String>,
+    selectedCategory: String,
+    search: String,
+    favoriteIds: Set<String>,
+    recent: List<PlaylistItem>,
+    favorites: List<PlaylistItem>,
+    continueWatching: List<PlaylistItem>,
+    onCategory: (String) -> Unit,
+    onSearch: (String) -> Unit,
+    onFavorite: (PlaylistItem) -> Unit,
+    onSeries: (PlaylistItem) -> Unit,
+    onHide: (String) -> Unit,
+    onBack: () -> Unit
+) {
+    val special = listOf("Continue watching", "Recently watched", "Favorites")
+    val allCategories = special + categories
+    val base = when (selectedCategory) {
+        "Continue watching" -> continueWatching
+        "Recently watched" -> recent
+        "Favorites" -> favorites
+        else -> seriesItems.filter { it.group == selectedCategory }
+    }
+    val displayed = if (search.isBlank()) base else seriesItems.filter { it.name.contains(search.trim(), true) }
+    Row(
+        Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Surface(
+            Modifier.width(250.dp).fillMaxHeight(),
+            shape = RoundedCornerShape(18.dp),
+            color = Color.Black.copy(alpha = .34f),
+            border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))
+        ) {
+            Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
+                    Text("Series", fontSize = 22.sp, fontWeight = FontWeight.Black)
+                }
+                SeriesSearch(search, onSearch)
+                LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    items(allCategories) { category ->
+                        Surface(
+                            onClick = { onCategory(category) },
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(11.dp),
+                            color = if (category == selectedCategory) Cyan.copy(alpha = .24f) else Color.Transparent
+                        ) {
+                            Row(Modifier.padding(start = 12.dp, top = 7.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(category, Modifier.weight(1f), maxLines = 1, fontWeight = if (category == selectedCategory) FontWeight.Bold else FontWeight.Normal)
+                                if (category !in special) {
+                                    IconButton(onClick = { onHide(category) }, modifier = Modifier.size(32.dp)) {
+                                        Icon(Icons.Default.VisibilityOff, "Hide $category", modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Column(Modifier.weight(1f).fillMaxHeight()) {
+            Text(selectedCategory.ifBlank { "Series" }, fontSize = 24.sp, fontWeight = FontWeight.Black)
+            Spacer(Modifier.height(10.dp))
+            SeriesGrid(displayed, favoriteIds, onFavorite, onSeries, Modifier.weight(1f), true)
         }
     }
 }
