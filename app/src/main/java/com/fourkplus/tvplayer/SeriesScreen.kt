@@ -49,7 +49,12 @@ internal fun SeriesScreen(
     loadDetails: suspend (PlaylistItem) -> Result<SeriesDetailsInfo>,
     onBack: () -> Unit
 ) {
-    val seriesItems = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.SERIES }.orEmpty() }
+    val hiddenCategories = LocalContext.current
+        .getSharedPreferences("parental_settings", Context.MODE_PRIVATE)
+        .getStringSet("hidden_categories", emptySet()).orEmpty()
+    val seriesItems = remember(playlist, hiddenCategories) {
+        playlist?.items?.filter { it.kind == MediaKind.SERIES && it.group !in hiddenCategories }.orEmpty()
+    }
     val categories = remember(seriesItems) { seriesItems.map { it.group }.distinct() }
     val context = LocalContext.current
     val store = remember { context.getSharedPreferences("series_library", Context.MODE_PRIVATE) }
