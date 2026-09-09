@@ -1166,21 +1166,46 @@ internal fun MoviePlayer(
     var selectedPlayer by remember(movie) {
         mutableStateOf(settings.getString("player_engine", "default") ?: "default")
     }
+    var missingExternalPlayer by remember(movie) { mutableStateOf<String?>(null) }
     if (selectedPlayer != "default") {
         LaunchedEffect(movie.streamUrl, selectedPlayer) {
             if (launchExternalPlayer(context, movie.streamUrl, selectedPlayer)) {
                 onExit()
             } else {
-                settings.edit().putString("player_engine", "default").apply()
-                selectedPlayer = "default"
+                missingExternalPlayer = selectedPlayer
             }
         }
         Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                CircularProgressIndicator(color = Cyan)
-                Spacer(Modifier.height(10.dp))
-                Text("Opening external player…")
+            if (missingExternalPlayer == null) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator(color = Cyan)
+                    Spacer(Modifier.height(10.dp))
+                    Text("Opening external player…")
+                }
             }
+        }
+        missingExternalPlayer?.let { missing ->
+            val playerName = externalPlayerName(missing)
+            AlertDialog(
+                onDismissRequest = onExit,
+                icon = { Icon(Icons.Default.InstallMobile, null) },
+                title = { Text("$playerName is not installed") },
+                text = { Text("Install $playerName from Google Play, then return and press Watch again.") },
+                confirmButton = {
+                    Button(onClick = {
+                        openExternalPlayerStore(context, missing)
+                        missingExternalPlayer = null
+                        onExit()
+                    }) { Text("Install $playerName") }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        settings.edit().putString("player_engine", "default").apply()
+                        selectedPlayer = "default"
+                        missingExternalPlayer = null
+                    }) { Text("Use default player") }
+                }
+            )
         }
         return
     }
@@ -1846,6 +1871,23 @@ private fun launchExternalPlayer(
     return false
 }
 
+private fun externalPlayerName(preference: String): String =
+    if (preference == "vlc") "VLC" else "MX Player"
+
+private fun openExternalPlayerStore(context: android.content.Context, preference: String) {
+    val packageName = if (preference == "vlc") "org.videolan.vlc" else "com.mxtech.videoplayer.ad"
+    val playStoreIntent = Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=$packageName")).apply {
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+    if (!runCatching { context.startActivity(playStoreIntent); true }.getOrDefault(false)) {
+        val browserIntent = Intent(
+            Intent.ACTION_VIEW,
+            Uri.parse("https://play.google.com/store/apps/details?id=$packageName")
+        ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
+        runCatching { context.startActivity(browserIntent) }
+    }
+}
+
 private fun mediaItemWithSubtitle(context: android.content.Context, streamUrl: String, subtitle: Uri?): MediaItem {
     val builder = MediaItem.Builder().setUri(streamUrl)
     if (subtitle != null) {
@@ -1893,12 +1935,24 @@ private fun LiveChannelPreview(
                 )
                 Spacer(Modifier.height(10.dp))
                 Text(
-                    if (externalFailed) "External player is not installed." else "Stream opened in external player.",
+                    if (externalFailed) "${externalPlayerName(selectedPlayer)} is not installed." else "Stream opened in external player.",
                     color = Color.White
                 )
                 Spacer(Modifier.height(10.dp))
-                OutlinedButton(onClick = { externalAttempt++ }) {
-                    Text(if (externalFailed) "Try again" else "Open again")
+                if (externalFailed) {
+                    Button(onClick = { openExternalPlayerStore(context, selectedPlayer) }) {
+                        Icon(Icons.Default.InstallMobile, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Install ${externalPlayerName(selectedPlayer)}")
+                    }
+                    TextButton(onClick = {
+                        settings.edit().putString("player_engine", "default").apply()
+                        externalAttempt++
+                    }) { Text("Use default player", color = Color.White) }
+                } else {
+                    OutlinedButton(onClick = { externalAttempt++ }) {
+                        Text("Open again")
+                    }
                 }
             }
         }
