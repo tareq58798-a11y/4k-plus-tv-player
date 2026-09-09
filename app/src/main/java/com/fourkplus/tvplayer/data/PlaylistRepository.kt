@@ -127,6 +127,73 @@ class PlaylistRepository(context: Context) {
         }.recoverCatching { throw friendlyError(it) }
     }
 
+    suspend fun seriesDetails(series: PlaylistItem): Result<SeriesDetailsInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            val source = savedSource() ?: throw IllegalArgumentException("No saved provider is available.")
+            val seriesId = series.channelId
+            require(source.kind == PlaylistKind.PROVIDER_LOGIN && !seriesId.isNullOrBlank()) {
+                "Series information is not available for this playlist."
+            }
+            var lastError: Exception? = null
+            for (server in addressCandidates(source.address).map(::normalizeServerBase)) {
+                try {
+                    val root = JSONObject(download(apiUrl(server, source, "get_series_info") + "&series_id=${encode(seriesId)}"))
+                    val info = root.optJSONObject("info") ?: JSONObject()
+                    val backdrop = info.optJSONArray("backdrop_path")?.let { array ->
+                        (0 until array.length()).asSequence().map { array.optString(it) }
+                            .firstOrNull(String::isNotBlank)
+                    } ?: info.optString("backdrop_path").takeIf { it.startsWith("http", true) }
+                    val episodesObject = root.optJSONObject("episodes") ?: JSONObject()
+                    val episodes = buildList {
+                        val seasonKeys = episodesObject.keys()
+                        while (seasonKeys.hasNext()) {
+                            val seasonKey = seasonKeys.next()
+                            val seasonNumber = seasonKey.toIntOrNull() ?: continue
+                            val seasonEpisodes = episodesObject.optJSONArray(seasonKey) ?: continue
+                            for (index in 0 until seasonEpisodes.length()) {
+                                val episode = seasonEpisodes.optJSONObject(index) ?: continue
+                                val id = episode.optString("id")
+                                if (id.isBlank()) continue
+                                val episodeInfo = episode.optJSONObject("info") ?: JSONObject()
+                                val extension = episode.optString("container_extension", "mp4").ifBlank { "mp4" }
+                                val episodeNumber = episode.optInt("episode_num", index + 1)
+                                add(
+                                    SeriesEpisode(
+                                        id = id,
+                                        seasonNumber = seasonNumber,
+                                        episodeNumber = episodeNumber,
+                                        title = firstText(episode, "title", "name")
+                                            ?: "Episode $episodeNumber",
+                                        streamUrl = "$server/series/${encode(source.username)}/${encode(source.password)}/$id.$extension",
+                                        thumbnailUrl = firstText(episodeInfo, "movie_image", "cover_big", "cover"),
+                                        duration = firstText(episodeInfo, "duration", "duration_secs"),
+                                        description = firstText(episodeInfo, "plot", "description")
+                                    )
+                                )
+                            }
+                        }
+                    }.sortedWith(compareBy<SeriesEpisode> { it.seasonNumber }.thenBy { it.episodeNumber })
+                    return@runCatching SeriesDetailsInfo(
+                        originalTitle = firstText(info, "o_name", "original_name", "original_title", "name")
+                            ?.takeIf(::containsLatinText),
+                        description = firstText(info, "plot", "description"),
+                        year = firstText(info, "year", "releaseDate", "releasedate")?.take(4),
+                        rating = firstText(info, "rating")?.takeUnless { it == "0" || it == "0.0" },
+                        genre = firstText(info, "genre"),
+                        cast = firstText(info, "cast", "actors"),
+                        director = firstText(info, "director"),
+                        backdropUrl = backdrop,
+                        posterUrl = firstText(info, "cover_big", "cover") ?: series.logoUrl,
+                        episodes = episodes
+                    )
+                } catch (error: Exception) {
+                    lastError = error
+                }
+            }
+            throw lastError ?: IllegalArgumentException("Series information could not be loaded.")
+        }.recoverCatching { throw friendlyError(it) }
+    }
+
     private fun loadM3u(input: PlaylistInput): LoadedPlaylist {
         var lastError: Exception? = null
         for (address in addressCandidates(input.address)) {
