@@ -56,6 +56,17 @@ class PlaylistRepository(context: Context) {
         )
     }
 
+    fun renameSavedSource(name: String) {
+        val cleaned = name.trim()
+        require(cleaned.isNotBlank()) { "Playlist name cannot be empty." }
+        preferences.edit().putString("name", cleaned).apply()
+    }
+
+    fun clearSavedSource() {
+        preferences.edit().clear().apply()
+        if (cacheFile.exists()) cacheFile.delete()
+    }
+
     suspend fun loadCached(): LoadedPlaylist? = withContext(Dispatchers.IO) {
         runCatching {
             if (!cacheFile.exists()) return@runCatching null
