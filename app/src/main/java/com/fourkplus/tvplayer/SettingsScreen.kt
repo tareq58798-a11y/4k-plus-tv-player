@@ -49,6 +49,7 @@ internal fun SettingsScreen(
     var muted by remember { mutableStateOf(playback.getBoolean("muted", false)) }
     var preferredSubtitle by remember { mutableStateOf(playback.getString("subtitle_language", "ar,en") ?: "ar,en") }
     var videoMode by remember { mutableStateOf(playback.getString("video_mode", "fit") ?: "fit") }
+    var playerEngine by remember { mutableStateOf(playback.getString("player_engine", "default") ?: "default") }
     var pinHash by remember { mutableStateOf(parental.getString("pin_hash", null)) }
     var parentalUnlocked by remember { mutableStateOf(pinHash == null) }
     var hiddenCategories by remember {
@@ -186,23 +187,43 @@ internal fun SettingsScreen(
                     }
                     Text("Video scaling", fontWeight = FontWeight.Bold)
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                        listOf("fit" to "Fit", "zoom" to "Fill").forEachIndexed { index, option ->
+                        listOf("fit" to "Fit", "zoom" to "Fill", "stretch" to "Stretch").forEachIndexed { index, option ->
                             SegmentedButton(
                                 selected = videoMode == option.first,
                                 onClick = {
                                     videoMode = option.first
                                     playback.edit().putString("video_mode", option.first).apply()
                                 },
-                                shape = SegmentedButtonDefaults.itemShape(index, 2)
+                                shape = SegmentedButtonDefaults.itemShape(index, 3)
                             ) { Text(option.second) }
                         }
                     }
                     Text(
-                        if (videoMode == "fit") "Shows the complete video and may add black bars."
-                        else "Fills the screen and may crop the edges.",
+                        when (videoMode) {
+                            "zoom" -> "Fills the screen and may crop the edges."
+                            "stretch" -> "Stretches the picture to fill the entire player."
+                            else -> "Shows the complete video and may add black bars."
+                        },
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
                     )
+                    HorizontalDivider()
+                    Text("Player engine", fontWeight = FontWeight.Bold)
+                    listOf(
+                        "default" to ("4K Plus player" to "Full controls, resume, subtitles, and progress"),
+                        "vlc" to ("VLC" to "Requires VLC to be installed"),
+                        "mx" to ("MX Player" to "Requires MX Player to be installed")
+                    ).forEach { option ->
+                        RadioSetting(
+                            title = option.second.first,
+                            description = option.second.second,
+                            selected = playerEngine == option.first,
+                            onClick = {
+                                playerEngine = option.first
+                                playback.edit().putString("player_engine", option.first).apply()
+                            }
+                        )
+                    }
                 }
             }
 
@@ -357,11 +378,21 @@ private fun SettingsSwitch(title: String, description: String, checked: Boolean,
 }
 
 @Composable
-private fun RadioSetting(title: String, selected: Boolean, onClick: () -> Unit) {
+private fun RadioSetting(
+    title: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    description: String? = null
+) {
     Surface(onClick = onClick, color = MaterialTheme.colorScheme.surface.copy(alpha = 0f)) {
         Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             RadioButton(selected = selected, onClick = onClick)
-            Text(title)
+            Column {
+                Text(title)
+                description?.let {
+                    Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+                }
+            }
         }
     }
 }
