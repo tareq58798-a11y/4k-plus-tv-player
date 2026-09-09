@@ -910,15 +910,18 @@ private fun MovieDetails(
                 Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite", tint = if (favorite) Orange else Cyan)
             }
         }
-        details?.trailerUrl?.let { trailer ->
-            OutlinedButton(
-                onClick = { runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(trailer))) } },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.SmartDisplay, null)
-                Spacer(Modifier.width(8.dp))
-                Text("Watch trailer")
-            }
+        OutlinedButton(
+            onClick = {
+                val query = listOfNotNull(movie.name, year, "official trailer").joinToString(" ")
+                val trailerSearch = Uri.parse("https://www.youtube.com/results").buildUpon()
+                    .appendQueryParameter("search_query", query).build()
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, trailerSearch)) }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Icon(Icons.Default.SmartDisplay, null)
+            Spacer(Modifier.width(8.dp))
+            Text("Watch trailer")
         }
 
         if (loading) {

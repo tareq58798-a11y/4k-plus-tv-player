@@ -113,6 +113,7 @@ When porting, preserve category order from the provider rather than alphabetical
 - Live stream pattern: `/live/{username}/{password}/{stream_id}.ts`.
 - Movie stream pattern: `/movie/{username}/{password}/{stream_id}.{extension}`.
 - Movie details are loaded on demand with `player_api.php?action=get_vod_info&vod_id={stream_id}` so large playlists still open quickly. Available plot, cast, director, genre, year, rating, duration, trailer, poster, and backdrop fields enrich the details screen.
+- Trailer actions use a YouTube search for the movie title, year, and “official trailer”; provider-supplied video IDs are not trusted because they can be missing, stale, or mapped to unrelated videos.
 - Series currently retain a logical `series://{id}` reference until episode browsing is implemented.
 - Provider compatibility includes HTTP/HTTPS normalization, special handling for HTTPS on port 80, redirects, and IPTV/VLC-compatible user agents.
 - M3U parsing recognizes live, movie, and series items from group/title/URL indicators.
