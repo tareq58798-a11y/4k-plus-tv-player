@@ -509,16 +509,35 @@ private fun HomeScreen(
 private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessage: (String) -> Unit) {
     val channels = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.LIVE }.orEmpty() }
     val categories = remember(channels) { channels.map { it.group }.distinct().sorted() }
-    var selectedCategory by remember { mutableStateOf("All") }
+    val recentlyWatched = "Recently watched"
+    val favorites = "Favorites"
+    var selectedCategory by remember { mutableStateOf(recentlyWatched) }
     var query by remember { mutableStateOf("") }
+    var categoryQuery by remember { mutableStateOf("") }
     val context = LocalContext.current
     val favoritesStore = remember { context.getSharedPreferences("favorite_channels", android.content.Context.MODE_PRIVATE) }
     var favoriteIds by remember { mutableStateOf(favoritesStore.getStringSet("ids", emptySet()).orEmpty().toSet()) }
-    val filtered = remember(channels, selectedCategory, query) {
-        channels.filter { channel ->
-            (selectedCategory == "All" || channel.group == selectedCategory) &&
-                (query.isBlank() || channel.name.contains(query.trim(), ignoreCase = true))
+    var recentIds by remember {
+        mutableStateOf(
+            favoritesStore.getString("recent_ids", "").orEmpty()
+                .split('\u001F').filter(String::isNotBlank)
+        )
+    }
+    val channelByKey = remember(channels) { channels.associateBy(::channelKey) }
+    val visibleCategories = remember(categories, categoryQuery) {
+        if (categoryQuery.isBlank()) categories
+        else categories.filter { it.contains(categoryQuery.trim(), ignoreCase = true) }
+    }
+    val categoryChannels = remember(channels, channelByKey, selectedCategory, favoriteIds, recentIds) {
+        when (selectedCategory) {
+            recentlyWatched -> recentIds.mapNotNull(channelByKey::get)
+            favorites -> channels.filter { channelKey(it) in favoriteIds }
+            else -> channels.filter { it.group == selectedCategory }
         }
+    }
+    val filtered = remember(categoryChannels, query) {
+        if (query.isBlank()) categoryChannels
+        else categoryChannels.filter { it.name.contains(query.trim(), ignoreCase = true) }
     }
 
     PremiumBackground {
@@ -541,7 +560,7 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                         border = BorderStroke(1.dp, Cyan.copy(alpha = .28f))
                     ) {
                         Row(Modifier.padding(horizontal = 11.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(Cyan))
+                            Box(Modifier.size(7.dp).clip(RoundedCornerShape(50)).background(Color(0xFFFF3B4F)))
                             Spacer(Modifier.width(7.dp))
                             Text("LIVE", color = Cyan, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
                         }
@@ -561,16 +580,39 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                     placeholder = { Text("Search channels") }
                 )
 
+                OutlinedTextField(
+                    value = categoryQuery,
+                    onValueChange = { categoryQuery = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    shape = RoundedCornerShape(18.dp),
+                    leadingIcon = { Icon(Icons.Default.Category, null) },
+                    trailingIcon = {
+                        if (categoryQuery.isNotEmpty()) IconButton(onClick = { categoryQuery = "" }) {
+                            Icon(Icons.Default.Close, "Clear category search")
+                        }
+                    },
+                    placeholder = { Text("Search categories") }
+                )
+
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                     item {
                         FilterChip(
-                            selected = selectedCategory == "All",
-                            onClick = { selectedCategory = "All" },
-                            label = { Text("All") },
-                            leadingIcon = { Icon(Icons.Default.GridView, null, Modifier.size(17.dp)) }
+                            selected = selectedCategory == recentlyWatched,
+                            onClick = { selectedCategory = recentlyWatched },
+                            label = { Text(recentlyWatched) },
+                            leadingIcon = { Icon(Icons.Default.History, null, Modifier.size(17.dp)) }
                         )
                     }
-                    items(categories) { category ->
+                    item {
+                        FilterChip(
+                            selected = selectedCategory == favorites,
+                            onClick = { selectedCategory = favorites },
+                            label = { Text(favorites) },
+                            leadingIcon = { Icon(Icons.Default.Star, null, Modifier.size(17.dp)) }
+                        )
+                    }
+                    items(visibleCategories) { category ->
                         FilterChip(
                             selected = selectedCategory == category,
                             onClick = { selectedCategory = category },
@@ -581,7 +623,14 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
 
                 when {
                     channels.isEmpty() -> EmptyLiveState("No live channels were found in this playlist.")
-                    filtered.isEmpty() -> EmptyLiveState("No channels match your search and category.")
+                    filtered.isEmpty() -> EmptyLiveState(
+                        when {
+                            query.isNotBlank() -> "No channels match your search."
+                            selectedCategory == recentlyWatched -> "Channels you watch will appear here."
+                            selectedCategory == favorites -> "Star channels to add them to Favorites."
+                            else -> "No channels are available in this category."
+                        }
+                    )
                     else -> LazyColumn(
                         Modifier.weight(1f),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -591,7 +640,7 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                             items = filtered,
                             key = { index, item -> "${item.channelId ?: item.name}-$index" }
                         ) { _, channel ->
-                            val favoriteKey = channel.channelId ?: "${channel.group}:${channel.name}"
+                            val favoriteKey = channelKey(channel)
                             ChannelRow(
                                 channel = channel,
                                 favorite = favoriteKey in favoriteIds,
@@ -600,7 +649,12 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                                     favoriteIds = updated
                                     favoritesStore.edit().putStringSet("ids", updated).apply()
                                 },
-                                onClick = { onMessage("${channel.name} selected — playback is next") }
+                                onClick = {
+                                    val updatedRecent = (listOf(favoriteKey) + recentIds.filterNot { it == favoriteKey }).take(20)
+                                    recentIds = updatedRecent
+                                    favoritesStore.edit().putString("recent_ids", updatedRecent.joinToString("\u001F")).apply()
+                                    onMessage("${channel.name} selected — playback is next")
+                                }
                             )
                         }
                     }
@@ -609,6 +663,8 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
         }
     }
 }
+
+private fun channelKey(channel: PlaylistItem): String = channel.channelId ?: "${channel.group}:${channel.name}"
 
 @Composable
 private fun ChannelRow(channel: PlaylistItem, favorite: Boolean, onFavorite: () -> Unit, onClick: () -> Unit) {

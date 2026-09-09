@@ -10,6 +10,7 @@
 - Version 0.2.1 improves compatibility after a real test returned `Connection reset`: protocol-aware HTTP/HTTPS fallback, VLC-compatible request headers, clearer connection errors, and a working clipboard paste action.
 - Version 0.3.0 replaces the provider-login-to-M3U shortcut with direct Xtream Codes API authentication and separate live, movie, series, and category loading. It also corrects HTTPS on port 80 and retries common compatible request signatures.
 - Version 0.4.0 adds the first real content browser for Live TV: lazy large-list rendering, category chips, search, channel logos, persistent favorites, empty states, and corrected Series count wording.
+- Version 0.4.1 removes All Channels, puts Recently watched and Favorites first, adds category search, records the 20 most recently selected channels in order, and changes the LIVE status dot to red.
 
 ## Product direction
 
