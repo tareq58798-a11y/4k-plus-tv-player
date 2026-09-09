@@ -28,7 +28,9 @@ data class PlaylistItem(
 data class LoadedPlaylist(
     val name: String,
     val items: List<PlaylistItem>,
-    val groups: List<String>
+    val groups: List<String>,
+    val accountStatus: String? = null,
+    val expiryEpochSeconds: Long? = null
 ) {
     val liveCount: Int get() = items.count { it.kind == MediaKind.LIVE }
     val movieCount: Int get() = items.count { it.kind == MediaKind.MOVIE }
