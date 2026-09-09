@@ -1590,7 +1590,6 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                 )
                 PlaybackOptionsOverlay(
                     modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
-                    player = player,
                     fullscreen = fullscreen,
                     onFullscreenChange = { fullscreen = it },
                     subtitlesEnabled = subtitlesEnabled,
