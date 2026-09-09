@@ -53,6 +53,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
@@ -615,7 +617,7 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                                 verticalArrangement = Arrangement.spacedBy(18.dp),
                                 contentPadding = PaddingValues(bottom = 18.dp)
                             ) {
-                                items(browseSections, key = { it.first }) { (title, sectionChannels) ->
+                                items(browseSections) { (title, sectionChannels) ->
                                     ChannelCategorySection(
                                         title = title,
                                         channels = sectionChannels,
@@ -640,7 +642,7 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                                 verticalArrangement = Arrangement.spacedBy(13.dp),
                                 contentPadding = PaddingValues(bottom = 18.dp)
                             ) {
-                                gridItems(searchedChannels, key = ::channelKey) { channel ->
+                                gridItems(searchedChannels) { channel ->
                                     ChannelPoster(
                                         channel = channel,
                                         favorite = channelKey(channel) in favoriteIds,
@@ -666,7 +668,7 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             contentPadding = PaddingValues(bottom = 18.dp)
                         ) {
-                            items(recentChannels, key = ::channelKey) { channel ->
+                            items(recentChannels) { channel ->
                                 CompactChannelRow(
                                     channel = channel,
                                     selected = channel == previewChannel,
@@ -749,7 +751,7 @@ private fun ChannelCategorySection(
                     }
                 }
             } else {
-                items(channels.take(12), key = ::channelKey) { channel ->
+                items(channels.take(12)) { channel ->
                     ChannelPoster(
                         channel = channel,
                         favorite = channelKey(channel) in favoriteIds,
@@ -804,6 +806,7 @@ private fun ChannelPoster(
 @Composable
 private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modifier) {
     val context = LocalContext.current
+    var playbackError by remember { mutableStateOf<String?>(null) }
     val player = remember {
         val dataSourceFactory = DefaultHttpDataSource.Factory()
             .setUserAgent("VLC/3.0.20 LibVLC/3.0.20")
@@ -815,15 +818,32 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
     }
 
     LaunchedEffect(channel?.streamUrl) {
+        playbackError = null
         if (channel == null) {
             player.clearMediaItems()
         } else {
-            player.setMediaItem(MediaItem.fromUri(channel.streamUrl))
-            player.prepare()
-            player.play()
+            runCatching {
+                player.setMediaItem(MediaItem.fromUri(channel.streamUrl))
+                player.prepare()
+                player.play()
+            }.onFailure {
+                playbackError = "This channel could not be previewed."
+                player.clearMediaItems()
+            }
         }
     }
-    DisposableEffect(player) { onDispose { player.release() } }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                playbackError = "This stream is unavailable. Choose another channel."
+            }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
+    }
 
     Surface(
         modifier = modifier,
@@ -851,6 +871,19 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                 ) {
                     Text(channel.name, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                }
+                if (playbackError != null) {
+                    Surface(
+                        modifier = Modifier.align(Alignment.Center).padding(18.dp),
+                        color = Color.Black.copy(alpha = .82f),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.ErrorOutline, null, tint = Color(0xFFFF5A67))
+                            Spacer(Modifier.width(8.dp))
+                            Text(playbackError.orEmpty(), color = Color.White, fontSize = 12.sp)
+                        }
+                    }
                 }
             }
         }
