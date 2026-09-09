@@ -880,6 +880,11 @@ private fun MoviesScreen(
                                         MovieShelf(
                                             title, sectionMovies, favoriteIds,
                                             onSeeAll = { selectedCategory = title; view = MovieView.CATEGORY },
+                                            onHide = if (title in setOf("Continue watching", "Recently watched", "Favorites")) null else {{
+                                                val updated = hiddenCategories + title
+                                                hiddenCategories = updated
+                                                parental.edit().putStringSet("hidden_movie_categories", updated).apply()
+                                            }},
                                             onFavorite = ::toggleFavorite,
                                             onMovie = ::openDetails
                                         )
@@ -937,12 +942,18 @@ private fun MovieShelf(
     movies: List<PlaylistItem>,
     favoriteIds: Set<String>,
     onSeeAll: () -> Unit,
+    onHide: (() -> Unit)?,
     onFavorite: (PlaylistItem) -> Unit,
     onMovie: (PlaylistItem) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(title, Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            onHide?.let {
+                IconButton(onClick = it, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.VisibilityOff, "Hide $title", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             TextButton(onClick = onSeeAll) { Text("See all", color = Cyan); Icon(Icons.Default.ChevronRight, null, tint = Cyan) }
         }
         LazyRow(horizontalArrangement = Arrangement.spacedBy(11.dp)) {
@@ -1502,6 +1513,11 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                                         channels = sectionChannels,
                                         favoriteIds = favoriteIds,
                                         onSeeAll = { selectedCategory = title; channelQuery = ""; view = LiveView.CATEGORY },
+                                        onHide = if (title in setOf(recentlyWatched, favorites)) null else {{
+                                            val updated = hiddenCategories + title
+                                            hiddenCategories = updated
+                                            parental.edit().putStringSet("hidden_live_categories", updated).apply()
+                                        }},
                                         onChannel = {
                                             selectedCategory = it.group
                                             showRecentInPlayer = false
@@ -1659,12 +1675,18 @@ private fun ChannelCategorySection(
     channels: List<PlaylistItem>,
     favoriteIds: Set<String>,
     onSeeAll: () -> Unit,
+    onHide: (() -> Unit)?,
     onChannel: (PlaylistItem) -> Unit,
     onFavorite: (PlaylistItem) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(title, Modifier.weight(1f), fontWeight = FontWeight.Bold, fontSize = 17.sp, maxLines = 1)
+            onHide?.let {
+                IconButton(onClick = it, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.VisibilityOff, "Hide $title", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             TextButton(onClick = onSeeAll) {
                 Text("See all", color = Cyan)
                 Icon(Icons.Default.ChevronRight, null, tint = Cyan, modifier = Modifier.size(18.dp))
