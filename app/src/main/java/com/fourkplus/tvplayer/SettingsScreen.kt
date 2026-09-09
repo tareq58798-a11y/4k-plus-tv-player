@@ -63,6 +63,8 @@ internal fun SettingsScreen(
         mutableStateOf(parental.getStringSet("hidden_series_categories", emptySet()).orEmpty().toSet())
     }
     var visibilitySection by remember { mutableStateOf(MediaKind.LIVE) }
+    var categorySearch by remember { mutableStateOf("") }
+    var hiddenOnly by remember { mutableStateOf(false) }
     var showPinDialog by remember { mutableStateOf(false) }
     var pinMode by remember { mutableStateOf(if (pinHash == null) "set" else "unlock") }
     var showRemoveConfirm by remember { mutableStateOf(false) }
@@ -270,56 +272,102 @@ internal fun SettingsScreen(
             }
 
             item {
-                SettingsSection("Parental controls", Icons.Default.AdminPanelSettings) {
-                    if (pinHash == null) {
-                        SettingsAction(Icons.Default.Pin, "Create parental PIN", "Protect hidden category settings", {
-                            pinMode = "set"
-                            showPinDialog = true
-                        })
-                    } else if (!parentalUnlocked) {
-                        SettingsAction(Icons.Default.LockOpen, "Unlock parental controls", "Enter your PIN to manage hidden categories", {
-                            pinMode = "unlock"
-                            showPinDialog = true
-                        })
-                    } else {
-                        Text("Category visibility", fontWeight = FontWeight.Bold)
-                        Text(
-                            "Uncheck a category to hide it. Hidden categories can always be restored here.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Row(
-                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            listOf(
-                                MediaKind.LIVE to "Live TV",
-                                MediaKind.MOVIE to "Movies",
-                                MediaKind.SERIES to "Series"
-                            ).forEach { (kind, label) ->
-                                FilterChip(
-                                    selected = visibilitySection == kind,
-                                    onClick = { visibilitySection = kind },
-                                    label = { Text(label) }
-                                )
+                SettingsSection("Hide categories", Icons.Default.VisibilityOff) {
+                    Text(
+                        "Choose which categories appear on the main screens. You can restore anything hidden here.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        listOf(
+                            MediaKind.LIVE to "Live TV",
+                            MediaKind.MOVIE to "Movies",
+                            MediaKind.SERIES to "Series"
+                        ).forEach { (kind, label) ->
+                            FilterChip(
+                                selected = visibilitySection == kind,
+                                onClick = { visibilitySection = kind; categorySearch = "" },
+                                label = { Text(label) },
+                                leadingIcon = {
+                                    Icon(
+                                        when (kind) {
+                                            MediaKind.LIVE -> Icons.Default.LiveTv
+                                            MediaKind.MOVIE -> Icons.Default.Movie
+                                            MediaKind.SERIES -> Icons.Default.VideoLibrary
+                                        },
+                                        null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        value = categorySearch,
+                        onValueChange = { categorySearch = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        label = { Text("Search categories") },
+                        leadingIcon = { Icon(Icons.Default.Search, null) },
+                        trailingIcon = {
+                            if (categorySearch.isNotEmpty()) {
+                                IconButton(onClick = { categorySearch = "" }) {
+                                    Icon(Icons.Default.Close, "Clear")
+                                }
                             }
                         }
-                        val activeHidden = when (visibilitySection) {
-                            MediaKind.LIVE -> hiddenLive
-                            MediaKind.MOVIE -> hiddenMovies
-                            MediaKind.SERIES -> hiddenSeries
-                        }
-                        val activeKey = when (visibilitySection) {
-                            MediaKind.LIVE -> "hidden_live_categories"
-                            MediaKind.MOVIE -> "hidden_movie_categories"
-                            MediaKind.SERIES -> "hidden_series_categories"
-                        }
-                        categoriesByKind[visibilitySection].orEmpty().forEach { category ->
+                    )
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Show hidden only", Modifier.weight(1f))
+                        Switch(checked = hiddenOnly, onCheckedChange = { hiddenOnly = it })
+                    }
+                    val activeHidden = when (visibilitySection) {
+                        MediaKind.LIVE -> hiddenLive
+                        MediaKind.MOVIE -> hiddenMovies
+                        MediaKind.SERIES -> hiddenSeries
+                    }
+                    val activeKey = when (visibilitySection) {
+                        MediaKind.LIVE -> "hidden_live_categories"
+                        MediaKind.MOVIE -> "hidden_movie_categories"
+                        MediaKind.SERIES -> "hidden_series_categories"
+                    }
+                    val displayedCategories = categoriesByKind[visibilitySection].orEmpty().filter { category ->
+                        (!hiddenOnly || category in activeHidden) &&
+                            (categorySearch.isBlank() || category.contains(categorySearch.trim(), ignoreCase = true))
+                    }
+                    if (displayedCategories.isEmpty()) {
+                        Text(
+                            if (hiddenOnly) "No hidden categories." else "No categories match your search.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 10.dp)
+                        )
+                    }
+                    displayedCategories.forEach { category ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (category in activeHidden) {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = .42f)
+                            } else {
+                                Cyan.copy(alpha = .11f)
+                            }
+                        ) {
                             Row(
-                                Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Checkbox(
+                                Column(Modifier.weight(1f)) {
+                                    Text(category, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        if (category in activeHidden) "Hidden" else "Visible",
+                                        color = if (category in activeHidden) MaterialTheme.colorScheme.onSurfaceVariant else Cyan,
+                                        style = MaterialTheme.typography.labelSmall
+                                    )
+                                }
+                                Switch(
                                     checked = category !in activeHidden,
                                     onCheckedChange = { visible ->
                                         val updated = if (visible) activeHidden - category else activeHidden + category
@@ -331,42 +379,58 @@ internal fun SettingsScreen(
                                         parental.edit().putStringSet(activeKey, updated).apply()
                                     }
                                 )
-                                Text(category, Modifier.weight(1f))
                             }
                         }
-                        if (activeHidden.isNotEmpty()) {
-                            TextButton(
-                                onClick = {
-                                    when (visibilitySection) {
-                                        MediaKind.LIVE -> hiddenLive = emptySet()
-                                        MediaKind.MOVIE -> hiddenMovies = emptySet()
-                                        MediaKind.SERIES -> hiddenSeries = emptySet()
-                                    }
-                                    parental.edit().remove(activeKey).apply()
-                                    onMessage("All categories are visible")
-                                },
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("Show all categories") }
+                    }
+                    if (activeHidden.isNotEmpty()) {
+                        Button(
+                            onClick = {
+                                when (visibilitySection) {
+                                    MediaKind.LIVE -> hiddenLive = emptySet()
+                                    MediaKind.MOVIE -> hiddenMovies = emptySet()
+                                    MediaKind.SERIES -> hiddenSeries = emptySet()
+                                }
+                                parental.edit().remove(activeKey).apply()
+                                onMessage("All categories are visible again")
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Visibility, null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Show all hidden categories")
                         }
+                    }
+                }
+            }
+
+            item {
+                SettingsSection("Parental controls", Icons.Default.AdminPanelSettings) {
+                    if (pinHash == null) {
+                        SettingsAction(Icons.Default.Pin, "Create parental PIN", "Protect restricted content settings", {
+                            pinMode = "set"
+                            showPinDialog = true
+                        })
+                    } else if (!parentalUnlocked) {
+                        SettingsAction(Icons.Default.LockOpen, "Unlock parental controls", "Enter your PIN to manage parental controls", {
+                            pinMode = "unlock"
+                            showPinDialog = true
+                        })
+                    } else {
+                        Text("Parental controls are unlocked.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedButton(
                             onClick = { parentalUnlocked = false },
                             modifier = Modifier.fillMaxWidth()
-                        ) { Icon(Icons.Default.Lock, null); Spacer(Modifier.width(7.dp)); Text("Lock controls") }
+                        ) {
+                            Icon(Icons.Default.Lock, null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Lock controls")
+                        }
                         TextButton(
                             onClick = {
-                                parental.edit()
-                                    .remove("pin_hash")
-                                    .remove("hidden_categories")
-                                    .remove("hidden_live_categories")
-                                    .remove("hidden_movie_categories")
-                                    .remove("hidden_series_categories")
-                                    .apply()
+                                parental.edit().remove("pin_hash").apply()
                                 pinHash = null
                                 parentalUnlocked = true
-                                hiddenLive = emptySet()
-                                hiddenMovies = emptySet()
-                                hiddenSeries = emptySet()
-                                onMessage("Parental controls removed")
+                                onMessage("Parental PIN removed")
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("Remove PIN", color = MaterialTheme.colorScheme.error) }
