@@ -78,12 +78,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { ACTIVATION, MANUAL, HOME, LIVE_TV }
+private enum class Screen { LOADING, ACTIVATION, MANUAL, HOME, LIVE_TV }
 private enum class ThemeChoice { SYSTEM, LIGHT, DARK }
 
 @Composable
 private fun App() {
-    var screen by remember { mutableStateOf(Screen.ACTIVATION) }
+    var screen by remember { mutableStateOf(Screen.LOADING) }
     var themeChoice by remember { mutableStateOf(ThemeChoice.SYSTEM) }
     val useDark = when (themeChoice) {
         ThemeChoice.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
@@ -98,6 +98,23 @@ private fun App() {
     var loadedPlaylist by remember { mutableStateOf<LoadedPlaylist?>(null) }
     val message: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
 
+    LaunchedEffect(Unit) {
+        val savedSource = playlistRepository.savedSource()
+        if (savedSource == null) {
+            screen = Screen.ACTIVATION
+        } else {
+            playlistRepository.load(savedSource)
+                .onSuccess {
+                    loadedPlaylist = it
+                    screen = Screen.HOME
+                }
+                .onFailure {
+                    screen = Screen.ACTIVATION
+                    message("Saved playlist could not be refreshed. Please reconnect.")
+                }
+        }
+    }
+
     FourKPlusTheme(darkTheme = useDark) {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
@@ -106,6 +123,16 @@ private fun App() {
         ) { scaffoldPadding ->
             Box(Modifier.fillMaxSize().padding(scaffoldPadding)) {
             when (screen) {
+                Screen.LOADING -> PremiumBackground {
+                    Column(
+                        Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        CircularProgressIndicator(color = Cyan)
+                        Text("Loading your playlist…", fontWeight = FontWeight.SemiBold)
+                    }
+                }
                 Screen.ACTIVATION -> ActivationScreen(
                     themeChoice = themeChoice,
                     onThemeChange = { themeChoice = it },
@@ -528,12 +555,15 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
     var selectedCategory by remember(playlist) { mutableStateOf(categories.firstOrNull().orEmpty()) }
     var categoryQuery by remember { mutableStateOf("") }
     var channelQuery by remember { mutableStateOf("") }
+    var showRecentInPlayer by remember { mutableStateOf(false) }
     var previewChannel by remember(playlist) { mutableStateOf(channels.firstOrNull()) }
     val context = LocalContext.current
     val store = remember { context.getSharedPreferences("favorite_channels", android.content.Context.MODE_PRIVATE) }
     var favoriteIds by remember { mutableStateOf(store.getStringSet("ids", emptySet()).orEmpty().toSet()) }
     var recentIds by remember {
-        mutableStateOf(store.getString("recent_ids", "").orEmpty().split('\u001F').filter(String::isNotBlank))
+        // v2 intentionally starts clean because older versions could record an
+        // automatically previewed channel as if the user had watched it.
+        mutableStateOf(store.getString("recent_ids_v2", "").orEmpty().split('\u001F').filter(String::isNotBlank))
     }
     val channelByKey = remember(channels) { channels.associateBy(::channelKey) }
     val recentChannels = remember(channelByKey, recentIds) { recentIds.mapNotNull(channelByKey::get) }
@@ -568,13 +598,21 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
         val key = channelKey(channel)
         val updated = (listOf(key) + recentIds.filterNot { it == key }).take(20)
         recentIds = updated
-        store.edit().putString("recent_ids", updated.joinToString("\u001F")).apply()
+        store.edit().putString("recent_ids_v2", updated.joinToString("\u001F")).apply()
     }
     fun toggleFavorite(channel: PlaylistItem) {
         val key = channelKey(channel)
         val updated = if (key in favoriteIds) favoriteIds - key else favoriteIds + key
         favoriteIds = updated
         store.edit().putStringSet("ids", updated).apply()
+    }
+
+    LaunchedEffect(view, selectedCategory) {
+        if (view == LiveView.CATEGORY) {
+            // Entering a category previews its first channel, but does not add
+            // it to history until the user deliberately selects a channel.
+            previewChannel = selectedChannels.firstOrNull()
+        }
     }
 
     PremiumBackground {
@@ -623,7 +661,12 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                                         channels = sectionChannels,
                                         favoriteIds = favoriteIds,
                                         onSeeAll = { selectedCategory = title; channelQuery = ""; view = LiveView.CATEGORY },
-                                        onChannel = { rememberChannel(it); view = LiveView.PLAYER },
+                                        onChannel = {
+                                            selectedCategory = it.group
+                                            showRecentInPlayer = false
+                                            rememberChannel(it)
+                                            view = LiveView.PLAYER
+                                        },
                                         onFavorite = ::toggleFavorite
                                     )
                                 }
@@ -631,6 +674,11 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                         }
                     }
                     LiveView.CATEGORY -> {
+                        LiveChannelPreview(
+                            channel = previewChannel,
+                            modifier = if (landscape) Modifier.fillMaxWidth().height(150.dp)
+                            else Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                        )
                         SearchField(channelQuery, { channelQuery = it }, "Search channels")
                         if (searchedChannels.isEmpty()) {
                             EmptyLiveState("No channels match your search.")
@@ -649,6 +697,7 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                                         onFavorite = { toggleFavorite(channel) },
                                         onClick = {
                                             rememberChannel(channel)
+                                            showRecentInPlayer = false
                                             view = LiveView.PLAYER
                                         }
                                     )
@@ -662,13 +711,31 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                             modifier = if (landscape) Modifier.fillMaxWidth().height(230.dp)
                             else Modifier.fillMaxWidth().aspectRatio(16f / 9f)
                         )
-                        Text("Recently watched", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = !showRecentInPlayer,
+                                onClick = { showRecentInPlayer = false },
+                                label = { Text(previewChannel?.group ?: selectedCategory, maxLines = 1) },
+                                leadingIcon = { Icon(Icons.Default.Category, null, Modifier.size(17.dp)) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = showRecentInPlayer,
+                                onClick = { showRecentInPlayer = true },
+                                label = { Text("Recently watched", maxLines = 1) },
+                                leadingIcon = { Icon(Icons.Default.History, null, Modifier.size(17.dp)) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        val playerChannels = if (showRecentInPlayer) recentChannels else channels.filter {
+                            it.group == (previewChannel?.group ?: selectedCategory)
+                        }
                         LazyColumn(
                             Modifier.weight(1f),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             contentPadding = PaddingValues(bottom = 18.dp)
                         ) {
-                            items(recentChannels) { channel ->
+                            items(playerChannels) { channel ->
                                 CompactChannelRow(
                                     channel = channel,
                                     selected = channel == previewChannel,

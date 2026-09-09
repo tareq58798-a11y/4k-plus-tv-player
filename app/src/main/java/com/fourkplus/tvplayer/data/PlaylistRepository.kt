@@ -34,6 +34,21 @@ class PlaylistRepository(context: Context) {
         }.recoverCatching { throw friendlyError(it) }
     }
 
+    fun savedSource(): PlaylistInput? {
+        val name = preferences.getString("name", null) ?: return null
+        val kind = preferences.getString("kind", null)?.let {
+            runCatching { PlaylistKind.valueOf(it) }.getOrNull()
+        } ?: return null
+        val address = preferences.getString("address", null) ?: return null
+        return PlaylistInput(
+            name = name,
+            kind = kind,
+            address = address,
+            username = preferences.getString("username", "").orEmpty(),
+            password = preferences.getString("password", "").orEmpty()
+        )
+    }
+
     private fun loadM3u(input: PlaylistInput): LoadedPlaylist {
         var lastError: Exception? = null
         for (address in addressCandidates(input.address)) {

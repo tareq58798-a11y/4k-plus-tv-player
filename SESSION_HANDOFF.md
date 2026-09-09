@@ -17,6 +17,7 @@
 - Version 0.6.0 replaces the rail layout with a portrait-first streaming layout: auto-playing preview, category search, horizontal channel shelves with See all, a searchable category grid, and a player view with Recently watched below it.
 - Version 0.6.1 fixes the category-grid ChannelPoster argument mapping that caused the v0.6.0 Kotlin compilation failure.
 - Version 0.6.2 hardens Live TV against provider data and stream failures: list rendering no longer assumes channel IDs are unique, and preview setup/player errors are contained and shown inside the preview rather than closing the app.
+- Version 0.7.0 securely restores the saved playlist at launch, keeps an auto-playing preview on category pages, starts each category with its first channel, resets inaccurate legacy history, records only deliberate selections, and lets the player switch between the current category and Recently watched.
 
 ## Product direction
 
