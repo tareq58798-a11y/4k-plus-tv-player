@@ -657,7 +657,7 @@ private fun MoviesScreen(
                             when (view) {
                                 MovieView.BROWSE -> "Movies"
                                 MovieView.CATEGORY -> selectedCategory
-                                else -> selectedMovie?.name ?: "Movies"
+                                else -> details?.originalTitle ?: selectedMovie?.name ?: "Movies"
                             },
                             fontSize = 25.sp, fontWeight = FontWeight.Black, maxLines = 1
                         )
@@ -853,6 +853,7 @@ private fun MovieDetails(
     val year = details?.year ?: movie.year
     val rating = validMovieRating(details?.rating ?: movie.rating)
     val duration = readableMovieDuration(details?.duration ?: movie.duration)
+    val displayTitle = details?.originalTitle ?: movie.name
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -869,7 +870,7 @@ private fun MovieDetails(
                 }
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .88f)))))
                 Text(
-                    movie.name,
+                    displayTitle,
                     color = Color.White,
                     fontSize = 21.sp,
                     fontWeight = FontWeight.Black,
@@ -888,6 +889,10 @@ private fun MovieDetails(
             }
         }
         Spacer(Modifier.height(2.dp))
+
+        if (!details?.originalTitle.isNullOrBlank() && details?.originalTitle != movie.name) {
+            Text(movie.name, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, maxLines = 2)
+        }
 
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -912,7 +917,7 @@ private fun MovieDetails(
         }
         OutlinedButton(
             onClick = {
-                val query = listOfNotNull(movie.name, year, "official trailer").joinToString(" ")
+                val query = listOfNotNull(details?.originalTitle ?: movie.name, year, "official trailer").joinToString(" ")
                 val trailerSearch = Uri.parse("https://www.youtube.com/results").buildUpon()
                     .appendQueryParameter("search_query", query).build()
                 runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, trailerSearch)) }

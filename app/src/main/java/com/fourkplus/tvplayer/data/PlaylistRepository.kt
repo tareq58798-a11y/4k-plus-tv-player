@@ -103,7 +103,12 @@ class PlaylistRepository(context: Context) {
                     val trailer = info.optString("youtube_trailer").takeIf(String::isNotBlank)?.let { value ->
                         if (value.startsWith("http", true)) value else "https://www.youtube.com/watch?v=$value"
                     }
+                    val originalTitle = (
+                        firstText(info, "o_name", "original_name", "original_title", "title", "name")
+                            ?: movieData?.let { firstText(it, "o_name", "original_name", "original_title", "name") }
+                        )?.takeIf(::containsLatinText)
                     return@runCatching MovieDetailsInfo(
+                        originalTitle = originalTitle,
                         description = firstText(info, "plot", "description"),
                         year = firstText(info, "year", "releasedate", "releaseDate")?.take(4),
                         rating = firstText(info, "rating")?.takeUnless { it == "0" || it == "0.0" },
@@ -233,6 +238,8 @@ class PlaylistRepository(context: Context) {
     private fun firstText(objectValue: JSONObject, vararg keys: String): String? =
         keys.asSequence().map { objectValue.optString(it).trim() }
             .firstOrNull { it.isNotBlank() && !it.equals("null", true) }
+
+    private fun containsLatinText(value: String): Boolean = value.any { it in 'A'..'Z' || it in 'a'..'z' }
 
     private fun normalizeServerBase(value: String): String {
         val uri = URI(value)

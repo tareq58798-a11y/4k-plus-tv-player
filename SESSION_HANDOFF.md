@@ -25,6 +25,7 @@ The full cross-device architecture and porting reference is maintained in `PORTI
 - Version 0.8.0 adds the Movies experience: category shelves and See all grids, global movie search, provider metadata, poster/details pages, favorites, recently watched, Continue watching, full Media3 playback, saved resume positions, and system-back navigation. Cache v3 stores the new movie metadata.
 - Version 0.8.1 keeps Favorites and Recently watched as permanent movie categories and loads rich movie information on demand from the provider's VOD-details endpoint. The redesigned portrait details page includes a cinematic backdrop, poster, plot, rating, year, genre, duration, cast, director, trailer action, Play/Resume, and favorite control while hiding unavailable or zero-value metadata.
 - Version 0.8.2 makes the trailer action reliable by searching YouTube with the movie title, release year, and “official trailer” instead of blindly opening provider-supplied video IDs that may be stale or unrelated.
+- Version 0.8.3 reads the original Latin-script movie title from provider VOD details when available. English movies can retain their Arabic catalogue title as a subtitle while using the original English title and year for accurate YouTube trailer searches.
 
 ## Product direction
 

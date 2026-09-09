@@ -36,6 +36,7 @@ data class LoadedPlaylist(
 }
 
 data class MovieDetailsInfo(
+    val originalTitle: String? = null,
     val description: String? = null,
     val year: String? = null,
     val rating: String? = null,
