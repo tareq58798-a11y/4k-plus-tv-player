@@ -71,6 +71,7 @@ import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
+import androidx.media3.ui.AspectRatioFrameLayout
 import com.fourkplus.tvplayer.ui.theme.*
 import com.fourkplus.tvplayer.data.LoadedPlaylist
 import com.fourkplus.tvplayer.data.MediaKind
@@ -668,7 +669,9 @@ private fun MoviesScreen(
                                 MovieView.CATEGORY -> selectedCategory
                                 else -> details?.originalTitle ?: selectedMovie?.name ?: "Movies"
                             },
-                            fontSize = 25.sp, fontWeight = FontWeight.Black, maxLines = 1
+                            fontSize = if (landscape) 23.sp else 22.sp,
+                            fontWeight = FontWeight.Black,
+                            lineHeight = if (landscape) 27.sp else 26.sp
                         )
                         if (view == MovieView.BROWSE) Text("${movies.size} movies", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -1062,6 +1065,7 @@ private fun MoviePlayer(
                 factory = {
                     PlayerView(it).apply {
                         useController = true
+                        resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                         this.player = player
                         installDoubleTapSeek(this, player, skipSeconds) { forward ->
                             seekFeedback = forward to System.nanoTime()
@@ -1349,7 +1353,12 @@ private fun LiveHeader(title: String, subtitle: String?, onBack: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
         Column(Modifier.weight(1f)) {
-            Text(title, fontSize = 25.sp, fontWeight = FontWeight.Black, maxLines = 1)
+            Text(
+                title,
+                fontSize = 22.sp,
+                lineHeight = 26.sp,
+                fontWeight = FontWeight.Black
+            )
             if (subtitle != null) Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Surface(
@@ -1724,6 +1733,7 @@ private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modi
                     factory = {
                         PlayerView(it).apply {
                             useController = true
+                            resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FIT
                             this.player = player
                             installDoubleTapSeek(this, player, skipSeconds) { forward ->
                             seekFeedback = forward to System.nanoTime()
