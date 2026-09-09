@@ -748,7 +748,11 @@ private fun MoviesScreen(
                             movie = movie,
                             startPosition = progress[channelKey(movie)] ?: 0L,
                             onProgress = { position, duration -> saveProgress(movie, position, duration) },
-                            modifier = Modifier.weight(1f)
+                            modifier = if (landscape) {
+                                Modifier.weight(1f)
+                            } else {
+                                Modifier.fillMaxWidth().aspectRatio(16f / 9f)
+                            }
                         )
                     }
                 }
