@@ -1019,6 +1019,8 @@ private fun MoviePlayer(
     var externalSubtitle by remember(movie) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
     var seekFeedback by remember { mutableStateOf<Pair<Boolean, Long>?>(null) }
+    var displayedPosition by remember(movie) { mutableLongStateOf(startPosition.coerceAtLeast(0L)) }
+    var displayedDuration by remember(movie) { mutableLongStateOf(0L) }
     LaunchedEffect(seekFeedback?.second) {
         if (seekFeedback != null) {
             delay(650)
@@ -1044,6 +1046,13 @@ private fun MoviePlayer(
         while (true) {
             delay(2_000)
             if (player.currentPosition > 0L) onProgress(player.currentPosition, player.duration)
+        }
+    }
+    LaunchedEffect(player) {
+        while (true) {
+            displayedPosition = player.currentPosition.coerceAtLeast(0L)
+            displayedDuration = player.duration.takeIf { it > 0L && it != C.TIME_UNSET } ?: 0L
+            delay(500)
         }
     }
     LaunchedEffect(player, subtitlesEnabled) {
@@ -1095,6 +1104,13 @@ private fun MoviePlayer(
                         .padding(horizontal = 34.dp)
                 )
             }
+            if (seekFeedback == null) {
+                PlaybackTimeDisplay(
+                    position = displayedPosition,
+                    duration = displayedDuration,
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 14.dp, bottom = 34.dp)
+                )
+            }
             if (seekFeedback == null) PlaybackOptionsOverlay(
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                 player = player,
@@ -1130,6 +1146,33 @@ private fun MoviePlayer(
         ) { playerContent(Modifier.fillMaxSize(), RectangleShape) }
     } else {
         playerContent(modifier.fillMaxWidth(), RoundedCornerShape(18.dp))
+    }
+}
+
+private fun formatPlayerClock(milliseconds: Long): String {
+    val totalSeconds = (milliseconds.coerceAtLeast(0L) / 1_000L)
+    val hours = totalSeconds / 3_600L
+    val minutes = (totalSeconds % 3_600L) / 60L
+    val seconds = totalSeconds % 60L
+    return if (hours > 0L) "%d:%02d:%02d".format(hours, minutes, seconds)
+    else "%d:%02d".format(minutes, seconds)
+}
+
+@Composable
+private fun PlaybackTimeDisplay(position: Long, duration: Long, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        color = Color.Black.copy(alpha = .68f),
+        shape = RoundedCornerShape(8.dp)
+    ) {
+        Text(
+            text = if (duration > 0L) "${formatPlayerClock(position)} / ${formatPlayerClock(duration)}"
+            else formatPlayerClock(position),
+            color = Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+        )
     }
 }
 
