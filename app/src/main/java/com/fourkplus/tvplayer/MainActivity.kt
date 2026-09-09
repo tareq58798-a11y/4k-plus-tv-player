@@ -1068,9 +1068,32 @@ internal fun MoviePlayer(
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
     val subtitleLanguages = settings.getString("subtitle_language", "ar,en").orEmpty()
         .split(',').map(String::trim).filter(String::isNotBlank)
-    val videoResizeMode = if (settings.getString("video_mode", "fit") == "zoom") {
-        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-    } else AspectRatioFrameLayout.RESIZE_MODE_FIT
+    val videoResizeMode = when (settings.getString("video_mode", "fit")) {
+        "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+    }
+    var selectedPlayer by remember(movie) {
+        mutableStateOf(settings.getString("player_engine", "default") ?: "default")
+    }
+    if (selectedPlayer != "default") {
+        LaunchedEffect(movie.streamUrl, selectedPlayer) {
+            if (launchExternalPlayer(context, movie.streamUrl, selectedPlayer)) {
+                onExit()
+            } else {
+                settings.edit().putString("player_engine", "default").apply()
+                selectedPlayer = "default"
+            }
+        }
+        Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                CircularProgressIndicator(color = Cyan)
+                Spacer(Modifier.height(10.dp))
+                Text("Opening external player…")
+            }
+        }
+        return
+    }
     var error by remember(movie) { mutableStateOf<String?>(null) }
     var fullscreen by remember(movie) { mutableStateOf(true) }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
@@ -1374,6 +1397,7 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                     LiveView.PLAYER -> {
                         LiveChannelPreview(
                             channel = previewChannel,
+                            externalPlayback = true,
                             modifier = if (landscape) Modifier.fillMaxWidth().height(230.dp)
                             else Modifier.fillMaxWidth().aspectRatio(16f / 9f)
                         )
@@ -1711,6 +1735,27 @@ private fun PlaybackOptionsOverlay(
     }
 }
 
+private fun launchExternalPlayer(
+    context: android.content.Context,
+    streamUrl: String,
+    preference: String
+): Boolean {
+    val packages = when (preference) {
+        "vlc" -> listOf("org.videolan.vlc")
+        "mx" -> listOf("com.mxtech.videoplayer.ad", "com.mxtech.videoplayer.pro")
+        else -> emptyList()
+    }
+    for (packageName in packages) {
+        val intent = Intent(Intent.ACTION_VIEW).apply {
+            setDataAndType(Uri.parse(streamUrl), "video/*")
+            setPackage(packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        if (runCatching { context.startActivity(intent); true }.getOrDefault(false)) return true
+    }
+    return false
+}
+
 private fun mediaItemWithSubtitle(context: android.content.Context, streamUrl: String, subtitle: Uri?): MediaItem {
     val builder = MediaItem.Builder().setUri(streamUrl)
     if (subtitle != null) {
@@ -1724,14 +1769,51 @@ private fun mediaItemWithSubtitle(context: android.content.Context, streamUrl: S
 }
 
 @Composable
-private fun LiveChannelPreview(channel: PlaylistItem?, modifier: Modifier = Modifier) {
+private fun LiveChannelPreview(
+    channel: PlaylistItem?,
+    modifier: Modifier = Modifier,
+    externalPlayback: Boolean = false
+) {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
     val subtitleLanguages = settings.getString("subtitle_language", "ar,en").orEmpty()
         .split(',').map(String::trim).filter(String::isNotBlank)
-    val videoResizeMode = if (settings.getString("video_mode", "fit") == "zoom") {
-        AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-    } else AspectRatioFrameLayout.RESIZE_MODE_FIT
+    val videoResizeMode = when (settings.getString("video_mode", "fit")) {
+        "zoom" -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+        "stretch" -> AspectRatioFrameLayout.RESIZE_MODE_FILL
+        else -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+    }
+    val selectedPlayer = settings.getString("player_engine", "default") ?: "default"
+    var externalAttempt by remember(channel?.streamUrl) { mutableIntStateOf(0) }
+    var externalFailed by remember(channel?.streamUrl) { mutableStateOf(false) }
+    if (externalPlayback && channel != null && selectedPlayer != "default") {
+        LaunchedEffect(channel.streamUrl, selectedPlayer, externalAttempt) {
+            externalFailed = !launchExternalPlayer(context, channel.streamUrl, selectedPlayer)
+        }
+        Box(
+            modifier.background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(
+                    if (externalFailed) Icons.Default.ErrorOutline else Icons.Default.OpenInNew,
+                    null,
+                    tint = if (externalFailed) MaterialTheme.colorScheme.error else Cyan,
+                    modifier = Modifier.size(36.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    if (externalFailed) "External player is not installed." else "Stream opened in external player.",
+                    color = Color.White
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedButton(onClick = { externalAttempt++ }) {
+                    Text(if (externalFailed) "Try again" else "Open again")
+                }
+            }
+        }
+        return
+    }
     var playbackError by remember { mutableStateOf<String?>(null) }
     var fullscreen by remember { mutableStateOf(false) }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
