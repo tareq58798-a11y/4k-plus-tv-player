@@ -38,6 +38,7 @@ internal fun SettingsScreen(
     onBack: () -> Unit,
     onRefresh: () -> Unit,
     onRename: (String) -> Unit,
+    onManagePlaylists: () -> Unit,
     onReplace: () -> Unit,
     onRemove: () -> Unit,
     onMessage: (String) -> Unit
@@ -125,7 +126,7 @@ internal fun SettingsScreen(
             ) {
                 item {
                     SettingsMenuGroup {
-                        SettingsMenuRow(Icons.Default.PlaylistPlay, "Playlist", Orange) { settingsPage = SettingsPage.PLAYLIST }
+                        SettingsMenuRow(Icons.Default.PlaylistPlay, "Playlists", Orange) { settingsPage = SettingsPage.PLAYLIST }
                         SettingsMenuRow(Icons.Default.PlayCircle, "Playback", Cyan) { settingsPage = SettingsPage.PLAYBACK }
                         SettingsMenuRow(Icons.Default.Palette, "Appearance", BrandBlue) { settingsPage = SettingsPage.APPEARANCE }
                     }
@@ -139,7 +140,7 @@ internal fun SettingsScreen(
                 }
                 item {
                     Text(
-                        "4K Plus TV Player • v0.12.0",
+                        "4K Plus TV Player • v0.12.1",
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
@@ -154,7 +155,15 @@ internal fun SettingsScreen(
             contentPadding = PaddingValues(bottom = 30.dp)
         ) {
             if (settingsPage == SettingsPage.PLAYLIST) item {
-                SettingsSection("Playlist", Icons.Default.PlaylistPlay) {
+                SettingsSection("Playlists", Icons.Default.PlaylistPlay) {
+                    SettingsAction(
+                        Icons.Default.PlaylistPlay,
+                        "Manage saved playlists",
+                        "Switch, add, or remove playlist accounts",
+                        onManagePlaylists
+                    )
+                    HorizontalDivider()
+                    Text("Current playlist", fontWeight = FontWeight.Bold)
                     OutlinedTextField(
                         value = playlistName,
                         onValueChange = { playlistName = it },
@@ -168,7 +177,7 @@ internal fun SettingsScreen(
                         modifier = Modifier.fillMaxWidth()
                     ) { Icon(Icons.Default.DriveFileRenameOutline, null); Spacer(Modifier.width(7.dp)); Text("Rename") }
                     SettingsAction(Icons.Default.Refresh, "Refresh playlist", "Download the newest channels and catalog", onRefresh)
-                    SettingsAction(Icons.Default.SwapHoriz, "Replace playlist", "Connect a different URL or provider account", onReplace)
+                    SettingsAction(Icons.Default.AddCircleOutline, "Add another playlist", "Keep the current playlist and connect another one", onReplace)
                     SettingsAction(
                         Icons.Default.DeleteForever,
                         "Remove playlist",
@@ -476,7 +485,7 @@ internal fun SettingsScreen(
 
             item {
                 Text(
-                    "4K Plus TV Player • v0.12.0",
+                    "4K Plus TV Player • v0.12.1",
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall

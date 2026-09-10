@@ -223,14 +223,22 @@ private fun App() {
                     onSelect = { source ->
                         scope.launch {
                             playlistRepository.selectSavedSource(source)
-                            playlistRepository.load(source)
-                                .onSuccess {
-                                    loadedPlaylist = it
-                                    savedPlaylists = playlistRepository.savedSources()
-                                    screen = Screen.HOME
-                                    message("${source.name} selected")
-                                }
-                                .onFailure { message(it.message ?: "Playlist could not be loaded") }
+                            val cached = playlistRepository.loadCached(source)
+                            if (cached != null) {
+                                loadedPlaylist = cached
+                                savedPlaylists = playlistRepository.savedSources()
+                                screen = Screen.HOME
+                                message("${source.name} selected")
+                            } else {
+                                playlistRepository.load(source)
+                                    .onSuccess {
+                                        loadedPlaylist = it
+                                        savedPlaylists = playlistRepository.savedSources()
+                                        screen = Screen.HOME
+                                        message("${source.name} selected")
+                                    }
+                                    .onFailure { message(it.message ?: "Playlist could not be loaded") }
+                            }
                         }
                     },
                     onRemove = { source ->
@@ -244,9 +252,15 @@ private fun App() {
                                 screen = Screen.ACTIVATION
                                 message("Playlist removed")
                             } else {
-                                playlistRepository.load(next)
-                                    .onSuccess { loadedPlaylist = it; message("Playlist removed") }
-                                    .onFailure { loadedPlaylist = null; screen = Screen.ACTIVATION }
+                                val cached = playlistRepository.loadCached(next)
+                                if (cached != null) {
+                                    loadedPlaylist = cached
+                                    message("Playlist removed")
+                                } else {
+                                    playlistRepository.load(next)
+                                        .onSuccess { loadedPlaylist = it; message("Playlist removed") }
+                                        .onFailure { loadedPlaylist = null; screen = Screen.ACTIVATION }
+                                }
                             }
                         }
                     }
@@ -301,6 +315,7 @@ private fun App() {
                             }
                             .onFailure { message(it.message ?: "Playlist could not be renamed") }
                     },
+                    onManagePlaylists = { screen = Screen.PLAYLISTS },
                     onReplace = { screen = Screen.MANUAL },
                     onRemove = {
                         playlistRepository.clearSavedSource()
@@ -311,9 +326,15 @@ private fun App() {
                             screen = Screen.ACTIVATION
                         } else {
                             scope.launch {
-                                playlistRepository.load(next)
-                                    .onSuccess { loadedPlaylist = it; screen = Screen.HOME }
-                                    .onFailure { loadedPlaylist = null; screen = Screen.ACTIVATION }
+                                val cached = playlistRepository.loadCached(next)
+                                if (cached != null) {
+                                    loadedPlaylist = cached
+                                    screen = Screen.HOME
+                                } else {
+                                    playlistRepository.load(next)
+                                        .onSuccess { loadedPlaylist = it; screen = Screen.HOME }
+                                        .onFailure { loadedPlaylist = null; screen = Screen.ACTIVATION }
+                                }
                             }
                         }
                         message("Playlist removed")
@@ -678,11 +699,6 @@ private fun PlaylistManagerScreen(
             Row(verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
                 Text("Playlists", Modifier.weight(1f), fontSize = 27.sp, fontWeight = FontWeight.Black)
-                Button(onClick = onAdd) {
-                    Icon(Icons.Default.Add, null)
-                    Spacer(Modifier.width(6.dp))
-                    Text("Add")
-                }
             }
             Text(
                 "Switch between saved playlists without replacing or deleting the others.",
