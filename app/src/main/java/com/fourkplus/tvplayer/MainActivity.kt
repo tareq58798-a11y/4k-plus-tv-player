@@ -599,8 +599,11 @@ private fun ManualPlaylistScreen(
         }
         OutlinedTextField(name, { name = it }, label = { Text("Playlist name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(
-            address, { address = it.trim() },
+            address, { address = it },
             label = { Text(if (tab == 0) "M3U/M3U8 URL" else "Server address") },
+            supportingText = {
+                Text("The app keeps http:// or https:// exactly as entered. No protocol means http://.")
+            },
             trailingIcon = {
                 IconButton(onClick = { address = clipboard.getText()?.text.orEmpty().trim() }) {
                     Icon(Icons.Default.ContentPaste, "Paste")
