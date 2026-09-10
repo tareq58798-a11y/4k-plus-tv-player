@@ -1,6 +1,7 @@
 package com.fourkplus.tvplayer
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -21,6 +22,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -51,8 +53,10 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.AnnotatedString
@@ -998,19 +1002,19 @@ private fun LandscapeMovieBrowser(
     }
     val displayed = if (search.isBlank()) base else movies.filter { it.name.contains(search.trim(), true) }
     Row(
-        Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
+        Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Surface(
-            Modifier.width(250.dp).fillMaxHeight(),
-            shape = RoundedCornerShape(18.dp),
+            Modifier.width(205.dp).fillMaxHeight(),
+            shape = RoundedCornerShape(15.dp),
             color = Color.Black.copy(alpha = .34f),
             border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))
         ) {
-            Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.fillMaxSize().padding(9.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
-                    Text("Movies", fontSize = 22.sp, fontWeight = FontWeight.Black)
+                    Text("Movies", fontSize = 19.sp, fontWeight = FontWeight.Black)
                 }
                 SearchField(search, onSearch, "Search movies")
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -1035,8 +1039,8 @@ private fun LandscapeMovieBrowser(
             }
         }
         Column(Modifier.weight(1f).fillMaxHeight()) {
-            Text(selectedCategory.ifBlank { "Movies" }, fontSize = 24.sp, fontWeight = FontWeight.Black)
-            Spacer(Modifier.height(10.dp))
+            Text(selectedCategory.ifBlank { "Movies" }, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1)
+            Spacer(Modifier.height(6.dp))
             MovieGrid(displayed, favoriteIds, onFavorite, onMovie, Modifier.weight(1f), true)
         }
     }
@@ -1051,19 +1055,21 @@ private fun LandscapeLiveBrowser(
     favoriteIds: Set<String>,
     onCategory: (String) -> Unit,
     onChannel: (PlaylistItem) -> Unit,
+    onChannelFullscreen: (PlaylistItem) -> Unit,
     onFavorite: (PlaylistItem) -> Unit,
     onHide: (String) -> Unit,
     onBack: () -> Unit
 ) {
+    var fullscreenChannel by remember { mutableStateOf<PlaylistItem?>(null) }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        LiveChannelPreview(selectedChannel, Modifier.fillMaxSize())
+        LiveChannelPreview(if (fullscreenChannel == null) selectedChannel else null, Modifier.fillMaxSize())
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .36f)))
         Row(
-            Modifier.fillMaxSize().padding(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Surface(
-                Modifier.width(250.dp).fillMaxHeight(),
+                Modifier.width(210.dp).fillMaxHeight(),
                 shape = RoundedCornerShape(16.dp),
                 color = Color.Black.copy(alpha = .62f)
             ) {
@@ -1094,7 +1100,7 @@ private fun LandscapeLiveBrowser(
                 }
             }
             Surface(
-                Modifier.width(360.dp).fillMaxHeight(),
+                Modifier.width(310.dp).fillMaxHeight(),
                 shape = RoundedCornerShape(16.dp),
                 color = Color.Black.copy(alpha = .54f)
             ) {
@@ -1102,15 +1108,22 @@ private fun LandscapeLiveBrowser(
                     items(channels) { channel ->
                         val selected = channelKey(channel) == selectedChannel?.let(::channelKey)
                         Surface(
-                            onClick = { onChannel(channel) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth().pointerInput(channelKey(channel)) {
+                                detectTapGestures(
+                                    onTap = { onChannel(channel) },
+                                    onDoubleTap = {
+                                        onChannelFullscreen(channel)
+                                        fullscreenChannel = channel
+                                    }
+                                )
+                            },
                             shape = RoundedCornerShape(9.dp),
                             color = if (selected) Cyan.copy(alpha = .32f) else Color.Transparent
                         ) {
-                            Row(Modifier.padding(7.dp), verticalAlignment = Alignment.CenterVertically) {
-                                AsyncImage(channel.logoUrl, null, Modifier.size(34.dp), contentScale = ContentScale.Fit)
-                                Spacer(Modifier.width(9.dp))
-                                Text(channel.name, Modifier.weight(1f), color = Color.White, maxLines = 1, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+                            Row(Modifier.padding(horizontal = 6.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                AsyncImage(channel.logoUrl, null, Modifier.size(28.dp), contentScale = ContentScale.Fit)
+                                Spacer(Modifier.width(7.dp))
+                                Text(channel.name, Modifier.weight(1f), color = Color.White, fontSize = 12.sp, maxLines = 1, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
                                 IconButton(onClick = { onFavorite(channel) }, modifier = Modifier.size(30.dp)) {
                                     Icon(
                                         if (channelKey(channel) in favoriteIds) Icons.Default.Star else Icons.Default.StarBorder,
@@ -1142,6 +1155,23 @@ private fun LandscapeLiveBrowser(
             }
         }
     }
+    fullscreenChannel?.let { active ->
+        Dialog(
+            onDismissRequest = { fullscreenChannel = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+        ) {
+            LiveChannelPreview(
+                channel = active,
+                modifier = Modifier.fillMaxSize(),
+                channelList = channels,
+                onChannelChange = { next ->
+                    onChannel(next)
+                    fullscreenChannel = next
+                }
+            )
+        }
+    }
+
 }
 
 @Composable
@@ -1197,8 +1227,8 @@ private fun MovieGrid(
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { Text("No movies match your search.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
     } else {
         LazyVerticalGrid(
-            columns = GridCells.Fixed(if (landscape) 6 else 3), modifier = modifier,
-            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(16.dp),
+            columns = GridCells.Fixed(if (landscape) 7 else 3), modifier = modifier,
+            horizontalArrangement = Arrangement.spacedBy(if (landscape) 7.dp else 10.dp), verticalArrangement = Arrangement.spacedBy(if (landscape) 9.dp else 16.dp),
             contentPadding = PaddingValues(bottom = 20.dp)
         ) {
             gridItems(movies) { movie ->
@@ -1259,13 +1289,14 @@ private fun MovieDetails(
     val rating = validMovieRating(details?.rating ?: movie.rating)
     val duration = readableMovieDuration(details?.duration ?: movie.duration)
     val displayTitle = details?.originalTitle ?: movie.name
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(if (landscape) 8.dp else 14.dp)
     ) {
         Surface(
-            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-            shape = RoundedCornerShape(20.dp),
+            Modifier.fillMaxWidth().then(if (landscape) Modifier.height(170.dp) else Modifier.aspectRatio(16f / 9f)),
+            shape = RoundedCornerShape(if (landscape) 14.dp else 20.dp),
             color = Color.Black,
             shadowElevation = 10.dp
         ) {
@@ -1280,10 +1311,10 @@ private fun MovieDetails(
                     fontSize = 21.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 2,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 132.dp, end = 14.dp, bottom = 16.dp)
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = if (landscape) 108.dp else 132.dp, end = 14.dp, bottom = if (landscape) 10.dp else 16.dp)
                 )
                 Surface(
-                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(104.dp).aspectRatio(2f / 3f),
+                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(if (landscape) 80.dp else 104.dp).aspectRatio(2f / 3f),
                     shape = RoundedCornerShape(13.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shadowElevation = 12.dp,
@@ -1699,6 +1730,7 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                         } ?: previewChannel
                     },
                     onChannel = { rememberChannel(it) },
+                    onChannelFullscreen = { rememberChannel(it) },
                     onFavorite = ::toggleFavorite,
                     onHide = { category ->
                         val updated = hiddenCategories + category
