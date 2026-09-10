@@ -1586,9 +1586,6 @@ internal fun MoviePlayer(
             player.release()
         }
     }
-    val fullscreenDoubleTapExit: (() -> Unit)? = if ((fullscreen || hostedFullscreen) && onFullscreenDoubleTap != null) {
-        { fullscreen = false; onFullscreenDoubleTap() }
-    } else null
     val playerContent: @Composable (Modifier, Shape) -> Unit = { contentModifier, shape ->
         Surface(contentModifier, shape, color = Color.Black) {
             Box(Modifier.fillMaxSize()) {
@@ -2487,6 +2484,9 @@ private fun LiveChannelPreview(
         }
     }
 
+    val fullscreenDoubleTapExit: (() -> Unit)? = if ((fullscreen || hostedFullscreen) && onFullscreenDoubleTap != null) {
+        { fullscreen = false; onFullscreenDoubleTap() }
+    } else null
     val playerContent: @Composable (Modifier, Shape) -> Unit = { contentModifier, shape ->
         Surface(modifier = contentModifier, shape = shape, color = Color.Black, shadowElevation = 8.dp) {
             Box(Modifier.fillMaxSize()) {
