@@ -12,6 +12,7 @@ import java.net.SocketException
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 import kotlinx.coroutines.Dispatchers
@@ -36,7 +37,7 @@ class PlaylistRepository(context: Context) {
                 PlaylistKind.PROVIDER_LOGIN -> loadProvider(input)
             }
             saveSource(input)
-            saveCache(playlist)
+            saveCache(input, playlist)
             playlist
         }.recoverCatching { throw friendlyError(it) }
     }
@@ -100,6 +101,7 @@ class PlaylistRepository(context: Context) {
             writeSources(remaining, sourceId(remaining.first()))
             writeActiveSource(remaining.first())
         }
+        active?.let { sourceCacheFile(it).delete() }
         if (cacheFile.exists()) cacheFile.delete()
     }
 
@@ -120,6 +122,12 @@ class PlaylistRepository(context: Context) {
 
     private fun sourceId(input: PlaylistInput): String =
         "${input.kind.name}|${input.address.trim()}|${input.username.trim()}"
+
+    private fun sourceCacheFile(input: PlaylistInput) = appContext.filesDir.resolve(
+        "playlist_cache_" + MessageDigest.getInstance("SHA-256")
+            .digest(sourceId(input).toByteArray(StandardCharsets.UTF_8))
+            .take(12).joinToString("") { "%02x".format(it) } + ".bin.gz"
+    )
 
     private fun writeSources(sources: List<PlaylistInput>, activeId: String) {
         val array = JSONArray()
@@ -143,10 +151,16 @@ class PlaylistRepository(context: Context) {
             .putString("password", input.password).apply()
     }
 
-    suspend fun loadCached(): LoadedPlaylist? = withContext(Dispatchers.IO) {
+    suspend fun loadCached(source: PlaylistInput? = savedSource()): LoadedPlaylist? = withContext(Dispatchers.IO) {
         runCatching {
-            if (!cacheFile.exists()) return@runCatching null
-            DataInputStream(GZIPInputStream(cacheFile.inputStream().buffered())).use { input ->
+            val selectedSource = source ?: return@runCatching null
+            val specificCache = sourceCacheFile(selectedSource)
+            val selectedFile = when {
+                specificCache.exists() -> specificCache
+                cacheFile.exists() -> cacheFile
+                else -> return@runCatching null
+            }
+            val loaded = DataInputStream(GZIPInputStream(selectedFile.inputStream().buffered())).use { input ->
                 require(input.readInt() == CACHE_VERSION) { "Unsupported playlist cache." }
                 val name = input.readSizedString()
                 val accountStatus = input.readNullableString()
@@ -176,6 +190,9 @@ class PlaylistRepository(context: Context) {
                     expiryEpochSeconds = expiryEpochSeconds
                 )
             }
+            if (selectedFile == cacheFile && loaded.name != selectedSource.name) return@runCatching null
+            if (selectedFile == cacheFile) saveCache(selectedSource, loaded)
+            loaded
         }.getOrNull()
     }
 
@@ -486,8 +503,9 @@ class PlaylistRepository(context: Context) {
         writeActiveSource(cleaned)
     }
 
-    private fun saveCache(playlist: LoadedPlaylist) {
-        val temporary = appContext.filesDir.resolve("playlist_cache_v1.tmp")
+    private fun saveCache(source: PlaylistInput, playlist: LoadedPlaylist) {
+        val destination = sourceCacheFile(source)
+        val temporary = appContext.filesDir.resolve(destination.name + ".tmp")
         runCatching {
             DataOutputStream(GZIPOutputStream(temporary.outputStream().buffered())).use { output ->
                 output.writeInt(CACHE_VERSION)
@@ -508,8 +526,8 @@ class PlaylistRepository(context: Context) {
                     output.writeNullableString(item.duration)
                 }
             }
-            if (!temporary.renameTo(cacheFile)) {
-                temporary.copyTo(cacheFile, overwrite = true)
+            if (!temporary.renameTo(destination)) {
+                temporary.copyTo(destination, overwrite = true)
                 temporary.delete()
             }
         }.onFailure { temporary.delete() }
