@@ -452,7 +452,7 @@ class PlaylistRepository(context: Context) {
         var lastCode = -1
         for (userAgent in userAgents) {
             var current = URI(url)
-            repeat(6) {
+            for (redirectCount in 0 until 6) {
                 val connection = current.toURL().openConnection() as HttpURLConnection
                 connection.connectTimeout = 15_000
                 connection.readTimeout = 30_000
@@ -483,7 +483,7 @@ class PlaylistRepository(context: Context) {
                     }
                     else -> {
                         connection.disconnect()
-                        return@repeat
+                        break
                     }
                 }
             }
