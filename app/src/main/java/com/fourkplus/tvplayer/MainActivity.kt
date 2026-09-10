@@ -315,6 +315,7 @@ private fun App() {
                             }
                             .onFailure { message(it.message ?: "Playlist could not be renamed") }
                     },
+                    onManagePlaylists = { screen = Screen.PLAYLISTS },
                     onReplace = { screen = Screen.MANUAL },
                     onRemove = {
                         playlistRepository.clearSavedSource()
