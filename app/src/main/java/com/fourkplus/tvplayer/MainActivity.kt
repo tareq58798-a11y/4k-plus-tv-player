@@ -1115,13 +1115,20 @@ private fun LandscapeLiveBrowser(
                     }
                 }
             }
-            selectedChannel?.let {
-                Surface(
-                    Modifier.align(Alignment.BottomEnd).padding(8.dp),
-                    color = Color.Black.copy(alpha = .64f),
-                    shape = RoundedCornerShape(11.dp)
-                ) {
-                    Text(it.name, color = Color.White, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp))
+            Box(Modifier.weight(1f).fillMaxHeight()) {
+                selectedChannel?.let {
+                    Surface(
+                        Modifier.align(Alignment.BottomEnd).padding(8.dp),
+                        color = Color.Black.copy(alpha = .64f),
+                        shape = RoundedCornerShape(11.dp)
+                    ) {
+                        Text(
+                            it.name,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp)
+                        )
+                    }
                 }
             }
         }
