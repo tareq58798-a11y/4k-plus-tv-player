@@ -1108,8 +1108,28 @@ private fun LandscapeLiveBrowser(
     onBack: () -> Unit
 ) {
     var fullscreenChannel by remember { mutableStateOf<PlaylistItem?>(null) }
+    fullscreenChannel?.let { active ->
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            LiveChannelPreview(
+                channel = active,
+                modifier = Modifier.fillMaxSize(),
+                channelList = channels,
+                onChannelChange = { next ->
+                    onChannel(next)
+                    fullscreenChannel = next
+                },
+                hostedFullscreen = true,
+                onFullscreenDoubleTap = { fullscreenChannel = null }
+            )
+        }
+        return
+    }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        LiveChannelPreview(if (fullscreenChannel == null) selectedChannel else null, Modifier.fillMaxSize())
+        LiveChannelPreview(
+            channel = selectedChannel,
+            modifier = Modifier.fillMaxSize(),
+            onRequestFullscreen = { selectedChannel?.let { fullscreenChannel = it } }
+        )
         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .36f)))
         Row(
             Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 8.dp),
@@ -1202,25 +1222,6 @@ private fun LandscapeLiveBrowser(
             }
         }
     }
-    fullscreenChannel?.let { active ->
-        Dialog(
-            onDismissRequest = { fullscreenChannel = null },
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) {
-            LiveChannelPreview(
-                channel = active,
-                modifier = Modifier.fillMaxSize(),
-                channelList = channels,
-                onChannelChange = { next ->
-                    onChannel(next)
-                    fullscreenChannel = next
-                },
-                hostedFullscreen = true,
-                onFullscreenDoubleTap = { fullscreenChannel = null }
-            )
-        }
-    }
-
 }
 
 @Composable
@@ -2366,7 +2367,8 @@ private fun LiveChannelPreview(
     channelList: List<PlaylistItem> = emptyList(),
     onChannelChange: (PlaylistItem) -> Unit = {},
     hostedFullscreen: Boolean = false,
-    onFullscreenDoubleTap: (() -> Unit)? = null
+    onFullscreenDoubleTap: (() -> Unit)? = null,
+    onRequestFullscreen: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
@@ -2536,11 +2538,18 @@ private fun LiveChannelPreview(
                 }
                 if (controllerVisible && seekFeedback == null) PlaybackOptionsOverlay(
                     modifier = Modifier.align(Alignment.TopEnd)
-                        .then(if (fullscreen) Modifier.statusBarsPadding() else Modifier)
+                        .then(
+                            if (fullscreen || hostedFullscreen) Modifier
+                                .windowInsetsPadding(WindowInsets.displayCutout)
+                                .padding(horizontal = 16.dp)
+                            else Modifier
+                        )
                         .padding(8.dp),
                     player = player,
                     fullscreen = fullscreen,
-                    onFullscreenChange = { fullscreen = it },
+                    onFullscreenChange = { requested ->
+                        if (requested && onRequestFullscreen != null) onRequestFullscreen() else fullscreen = requested
+                    },
                     subtitlesEnabled = subtitlesEnabled,
                     onSubtitlesEnabledChange = {
                         subtitlesEnabled = it
@@ -2565,7 +2574,12 @@ private fun LiveChannelPreview(
                     val next = channelList.getOrNull(currentIndex + 1)
                     Surface(
                         modifier = Modifier.align(Alignment.TopStart)
-                            .then(if (fullscreen) Modifier.statusBarsPadding() else Modifier)
+                            .then(
+                                if (fullscreen || hostedFullscreen) Modifier
+                                    .windowInsetsPadding(WindowInsets.displayCutout)
+                                    .padding(horizontal = 16.dp)
+                                else Modifier
+                            )
                             .padding(8.dp)
                             .fillMaxWidth(.58f),
                         color = Color.Black.copy(alpha = .72f),
