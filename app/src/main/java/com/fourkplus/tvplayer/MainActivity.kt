@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -87,7 +88,14 @@ import coil.compose.AsyncImage
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
+            window.isNavigationBarContrastEnforced = false
+            window.isStatusBarContrastEnforced = false
+        }
         setContent { App() }
     }
 }
@@ -143,7 +151,8 @@ private fun App() {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
             containerColor = MaterialTheme.colorScheme.background,
-            modifier = Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)
+            contentWindowInsets = WindowInsets.safeDrawing,
+            modifier = Modifier.fillMaxSize()
         ) { scaffoldPadding ->
             Box(Modifier.fillMaxSize().padding(scaffoldPadding)) {
             when (screen) {
@@ -1809,8 +1818,13 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                         }
                     }
                     LiveView.PLAYER -> {
+                        val playerChannels = if (showRecentInPlayer) recentChannels else channels.filter {
+                            it.group == (previewChannel?.group ?: selectedCategory)
+                        }
                         LiveChannelPreview(
                             channel = previewChannel,
+                            channelList = playerChannels,
+                            onChannelChange = { rememberChannel(it) },
                             externalPlayback = true,
                             modifier = if (landscape) Modifier.fillMaxWidth().height(230.dp)
                             else Modifier.fillMaxWidth().aspectRatio(16f / 9f)
@@ -1830,9 +1844,6 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                                 leadingIcon = { Icon(Icons.Default.History, null, Modifier.size(17.dp)) },
                                 modifier = Modifier.weight(1f)
                             )
-                        }
-                        val playerChannels = if (showRecentInPlayer) recentChannels else channels.filter {
-                            it.group == (previewChannel?.group ?: selectedCategory)
                         }
                         LazyColumn(
                             Modifier.weight(1f),
@@ -2262,7 +2273,9 @@ private fun mediaItemWithSubtitle(context: android.content.Context, streamUrl: S
 private fun LiveChannelPreview(
     channel: PlaylistItem?,
     modifier: Modifier = Modifier,
-    externalPlayback: Boolean = false
+    externalPlayback: Boolean = false,
+    channelList: List<PlaylistItem> = emptyList(),
+    onChannelChange: (PlaylistItem) -> Unit = {}
 ) {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
@@ -2319,6 +2332,7 @@ private fun LiveChannelPreview(
     }
     var playbackError by remember { mutableStateOf<String?>(null) }
     var fullscreen by remember { mutableStateOf(false) }
+    var controllerVisible by remember { mutableStateOf(true) }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(channel?.streamUrl) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
@@ -2393,6 +2407,12 @@ private fun LiveChannelPreview(
                     factory = {
                         PlayerView(it).apply {
                             useController = true
+                            controllerShowTimeoutMs = 4_000
+                            setControllerVisibilityListener(
+                                PlayerView.ControllerVisibilityListener { visibility ->
+                                    controllerVisible = visibility == android.view.View.VISIBLE
+                                }
+                            )
                             resizeMode = videoResizeMode
                             this.player = player
                             installDoubleTapSeek(this, player, skipSeconds) { forward ->
@@ -2402,6 +2422,8 @@ private fun LiveChannelPreview(
                     },
                     update = {
                         it.player = player
+                        it.resizeMode = videoResizeMode
+                        applyRequestedAspectRatio(it, videoMode)
                         installDoubleTapSeek(it, player, skipSeconds) { forward ->
                         seekFeedback = forward to System.nanoTime()
                     }
@@ -2418,8 +2440,10 @@ private fun LiveChannelPreview(
                             .padding(horizontal = 34.dp)
                     )
                 }
-                if (seekFeedback == null) PlaybackOptionsOverlay(
-                    modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                if (controllerVisible && seekFeedback == null) PlaybackOptionsOverlay(
+                    modifier = Modifier.align(Alignment.TopEnd)
+                        .then(if (fullscreen) Modifier.statusBarsPadding() else Modifier)
+                        .padding(8.dp),
                     player = player,
                     fullscreen = fullscreen,
                     onFullscreenChange = { fullscreen = it },
@@ -2441,13 +2465,43 @@ private fun LiveChannelPreview(
                         settings.edit().putString("video_mode", it).apply()
                     }
                 )
-                Surface(
-                    modifier = Modifier.align(Alignment.BottomStart).padding(10.dp),
-                    color = Color.Black.copy(alpha = .68f),
-                    shape = RoundedCornerShape(9.dp)
-                ) {
-                    Text(channel.name, color = Color.White, fontWeight = FontWeight.SemiBold, maxLines = 1,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                if (controllerVisible && seekFeedback == null) {
+                    val currentIndex = channelList.indexOfFirst { channelKey(it) == channelKey(channel) }
+                    val previous = channelList.getOrNull(currentIndex - 1)
+                    val next = channelList.getOrNull(currentIndex + 1)
+                    Surface(
+                        modifier = Modifier.align(Alignment.TopStart)
+                            .then(if (fullscreen) Modifier.statusBarsPadding() else Modifier)
+                            .padding(8.dp)
+                            .fillMaxWidth(.58f),
+                        color = Color.Black.copy(alpha = .72f),
+                        shape = RoundedCornerShape(11.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            IconButton(
+                                onClick = { previous?.let(onChannelChange) },
+                                enabled = previous != null
+                            ) {
+                                Icon(Icons.Default.SkipPrevious, "Previous channel", tint = Color.White)
+                            }
+                            Text(
+                                channel.name,
+                                color = Color.White,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 2,
+                                modifier = Modifier.weight(1f)
+                            )
+                            IconButton(
+                                onClick = { next?.let(onChannelChange) },
+                                enabled = next != null
+                            ) {
+                                Icon(Icons.Default.SkipNext, "Next channel", tint = Color.White)
+                            }
+                        }
+                    }
                 }
                 if (playbackError != null) {
                     Surface(
@@ -2470,7 +2524,7 @@ private fun LiveChannelPreview(
         Dialog(
             onDismissRequest = { fullscreen = false },
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) { playerContent(Modifier.fillMaxSize().navigationBarsPadding().padding(bottom = 56.dp), RectangleShape) }
+        ) { playerContent(Modifier.fillMaxSize(), RectangleShape) }
     } else {
         playerContent(modifier, RoundedCornerShape(18.dp))
     }
