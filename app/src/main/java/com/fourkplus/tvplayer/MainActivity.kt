@@ -694,9 +694,11 @@ private fun PlaylistManagerScreen(
                 contentPadding = PaddingValues(bottom = 24.dp)
             ) {
                 items(sources) { source ->
-                    val active = source.kind == activeSource?.kind &&
-                        source.address == activeSource.address &&
-                        source.username == activeSource.username
+                    val active = activeSource?.let {
+                        source.kind == it.kind &&
+                            source.address == it.address &&
+                            source.username == it.username
+                    } == true
                     ElevatedCard(
                         onClick = { if (!active) onSelect(source) },
                         modifier = Modifier.fillMaxWidth(),
