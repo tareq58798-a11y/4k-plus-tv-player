@@ -451,20 +451,43 @@ class PlaylistRepository(context: Context) {
         val userAgents = listOf("IPTVSmartersPro", "VLC/3.0.20 LibVLC/3.0.20", "Mozilla/5.0 (Android)")
         var lastCode = -1
         for (userAgent in userAgents) {
-            val connection = URI(url).toURL().openConnection() as HttpURLConnection
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 30_000
-            connection.instanceFollowRedirects = true
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("User-Agent", userAgent)
-            connection.setRequestProperty("Accept", "*/*")
-            connection.setRequestProperty("Accept-Encoding", "identity")
-            connection.setRequestProperty("Connection", "close")
-            try {
+            var current = URI(url)
+            for (redirectCount in 0 until 6) {
+                val connection = current.toURL().openConnection() as HttpURLConnection
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 30_000
+                connection.instanceFollowRedirects = false
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("User-Agent", userAgent)
+                connection.setRequestProperty("Accept", "*/*")
+                connection.setRequestProperty("Accept-Encoding", "identity")
+                connection.setRequestProperty("Connection", "close")
                 lastCode = connection.responseCode
-                if (lastCode in 200..299) return readBody(connection)
-                if (lastCode != 401 && lastCode != 403) break
-            } finally { connection.disconnect() }
+                when {
+                    lastCode in 200..299 -> {
+                        try {
+                            return readBody(connection)
+                        } finally {
+                            connection.disconnect()
+                        }
+                    }
+                    lastCode in setOf(301, 302, 303, 307, 308) -> {
+                        val location = connection.getHeaderField("Location")
+                        connection.disconnect()
+                        require(!location.isNullOrBlank()) { "The provider returned an invalid redirect." }
+                        val redirected = current.resolve(location)
+                        require(redirected.scheme.equals(current.scheme, true)) {
+                            "The provider redirected ${current.scheme.uppercase()} to ${redirected.scheme.uppercase()}. Use the exact working server protocol."
+                        }
+                        current = redirected
+                    }
+                    else -> {
+                        connection.disconnect()
+                        break
+                    }
+                }
+            }
+            if (lastCode != 401 && lastCode != 403) break
         }
         throw IllegalArgumentException(
             if (lastCode == 401 || lastCode == 403) "The provider denied access. Check the account details or connection limit."

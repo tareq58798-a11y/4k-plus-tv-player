@@ -2,6 +2,9 @@ package com.fourkplus.tvplayer
 
 import android.content.Context
 import java.security.MessageDigest
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
@@ -26,7 +29,7 @@ import com.fourkplus.tvplayer.data.MediaKind
 import com.fourkplus.tvplayer.data.PlaylistInput
 import com.fourkplus.tvplayer.ui.theme.*
 
-private enum class SettingsPage { ROOT, PLAYLIST, PLAYBACK, APPEARANCE, HISTORY, CATEGORIES, PARENTAL }
+private enum class SettingsPage { ROOT, PLAYLIST, INFO, PLAYBACK, APPEARANCE, HISTORY, CATEGORIES, PARENTAL }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -127,6 +130,7 @@ internal fun SettingsScreen(
                 item {
                     SettingsMenuGroup {
                         SettingsMenuRow(Icons.Default.PlaylistPlay, "Playlists", Orange) { settingsPage = SettingsPage.PLAYLIST }
+                        SettingsMenuRow(Icons.Default.Info, "App & playlist information", BrandBlue) { settingsPage = SettingsPage.INFO }
                         SettingsMenuRow(Icons.Default.PlayCircle, "Playback", Cyan) { settingsPage = SettingsPage.PLAYBACK }
                         SettingsMenuRow(Icons.Default.Palette, "Appearance", BrandBlue) { settingsPage = SettingsPage.APPEARANCE }
                     }
@@ -140,7 +144,7 @@ internal fun SettingsScreen(
                 }
                 item {
                     Text(
-                        "4K Plus TV Player • v0.12.3",
+                        "4K Plus TV Player • v0.13.0",
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
@@ -192,6 +196,37 @@ internal fun SettingsScreen(
                             style = MaterialTheme.typography.bodySmall
                         )
                     }
+                }
+            }
+
+            if (settingsPage == SettingsPage.INFO) item {
+                SettingsSection("App & playlist information", Icons.Default.Info) {
+                    Text("Application", fontWeight = FontWeight.Bold)
+                    InformationRow("App name", "4K Plus TV Player")
+                    InformationRow("Version", BuildConfig.VERSION_NAME)
+                    InformationRow("Android", android.os.Build.VERSION.RELEASE)
+                    HorizontalDivider()
+                    Text("Active playlist", fontWeight = FontWeight.Bold)
+                    InformationRow("Name", playlist?.name ?: "No active playlist")
+                    InformationRow(
+                        "Type",
+                        when (source?.kind) {
+                            com.fourkplus.tvplayer.data.PlaylistKind.PROVIDER_LOGIN -> "Provider login"
+                            com.fourkplus.tvplayer.data.PlaylistKind.M3U_URL -> "M3U URL"
+                            null -> "Not available"
+                        }
+                    )
+                    InformationRow("Username", source?.username?.takeIf(String::isNotBlank) ?: "Not applicable")
+                    InformationRow("Status", playlist?.accountStatus ?: "Not provided")
+                    InformationRow(
+                        "Expiry date",
+                        playlist?.expiryEpochSeconds?.let {
+                            DateTimeFormatter.ofPattern("dd MMM yyyy")
+                                .withZone(ZoneId.systemDefault())
+                                .format(Instant.ofEpochSecond(it))
+                        } ?: "Not provided"
+                    )
+                    InformationRow("Items", playlist?.items?.size?.toString() ?: "0")
                 }
             }
 
@@ -485,13 +520,24 @@ internal fun SettingsScreen(
 
             item {
                 Text(
-                    "4K Plus TV Player • v0.12.3",
+                    "4K Plus TV Player • v0.13.0",
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun InformationRow(label: String, value: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, Modifier.weight(1f), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontWeight = FontWeight.SemiBold)
     }
 }
 
