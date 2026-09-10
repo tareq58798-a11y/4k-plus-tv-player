@@ -1344,26 +1344,26 @@ private fun MovieDetails(
         verticalArrangement = Arrangement.spacedBy(if (landscape) 8.dp else 14.dp)
     ) {
         Surface(
-            Modifier.fillMaxWidth().then(if (landscape) Modifier.height(170.dp) else Modifier.aspectRatio(16f / 9f)),
+            Modifier.fillMaxWidth().then(if (landscape) Modifier.height(118.dp) else Modifier.aspectRatio(16f / 9f)),
             shape = RoundedCornerShape(if (landscape) 14.dp else 20.dp),
-            color = Color.Black,
+            color = if (landscape) Color.Black.copy(alpha = .28f) else Color.Black,
             shadowElevation = 10.dp
         ) {
             Box(Modifier.fillMaxSize()) {
-                if (!backdrop.isNullOrBlank()) {
+                if (!landscape && !backdrop.isNullOrBlank()) {
                     AsyncImage(backdrop, movie.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 }
-                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .88f)))))
+                if (!landscape) Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .88f)))))
                 Text(
                     displayTitle,
                     color = Color.White,
                     fontSize = 21.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 2,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(start = if (landscape) 108.dp else 132.dp, end = 14.dp, bottom = if (landscape) 10.dp else 16.dp)
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = if (landscape) 98.dp else 132.dp, end = 14.dp, bottom = if (landscape) 36.dp else 16.dp)
                 )
                 Surface(
-                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(if (landscape) 80.dp else 104.dp).aspectRatio(2f / 3f),
+                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(if (landscape) 70.dp else 104.dp).aspectRatio(2f / 3f),
                     shape = RoundedCornerShape(13.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shadowElevation = 12.dp,
