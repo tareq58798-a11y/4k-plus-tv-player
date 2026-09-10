@@ -114,7 +114,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { LOADING, ACTIVATION, MANUAL, HOME, LIVE_TV, MOVIES, SERIES, SETTINGS }
+private enum class Screen { LOADING, ACTIVATION, MANUAL, PLAYLISTS, HOME, LIVE_TV, MOVIES, SERIES, SETTINGS }
 internal enum class ThemeChoice { SYSTEM, LIGHT, DARK }
 
 @Composable
@@ -148,6 +148,7 @@ private fun App() {
     val appPreferences = remember { context.getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE) }
     val playlistRepository = remember { PlaylistRepository(context.applicationContext) }
     var loadedPlaylist by remember { mutableStateOf<LoadedPlaylist?>(null) }
+    var savedPlaylists by remember { mutableStateOf(playlistRepository.savedSources()) }
     val message: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
 
     LaunchedEffect(Unit) {
@@ -205,17 +206,55 @@ private fun App() {
                     onMessage = message
                 )
                 Screen.MANUAL -> ManualPlaylistScreen(
-                    onBack = { screen = Screen.ACTIVATION },
+                    onBack = { screen = if (savedPlaylists.isEmpty()) Screen.ACTIVATION else Screen.PLAYLISTS },
                     loadPlaylist = playlistRepository::load,
                     onConnected = {
                         loadedPlaylist = it
+                        savedPlaylists = playlistRepository.savedSources()
                         screen = Screen.HOME
                         message("${it.items.size} items loaded")
+                    }
+                )
+                Screen.PLAYLISTS -> PlaylistManagerScreen(
+                    sources = savedPlaylists,
+                    activeSource = playlistRepository.savedSource(),
+                    onBack = { screen = Screen.HOME },
+                    onAdd = { screen = Screen.MANUAL },
+                    onSelect = { source ->
+                        scope.launch {
+                            playlistRepository.selectSavedSource(source)
+                            playlistRepository.load(source)
+                                .onSuccess {
+                                    loadedPlaylist = it
+                                    savedPlaylists = playlistRepository.savedSources()
+                                    screen = Screen.HOME
+                                    message("${source.name} selected")
+                                }
+                                .onFailure { message(it.message ?: "Playlist could not be loaded") }
+                        }
+                    },
+                    onRemove = { source ->
+                        scope.launch {
+                            playlistRepository.selectSavedSource(source)
+                            playlistRepository.clearSavedSource()
+                            savedPlaylists = playlistRepository.savedSources()
+                            val next = playlistRepository.savedSource()
+                            if (next == null) {
+                                loadedPlaylist = null
+                                screen = Screen.ACTIVATION
+                                message("Playlist removed")
+                            } else {
+                                playlistRepository.load(next)
+                                    .onSuccess { loadedPlaylist = it; message("Playlist removed") }
+                                    .onFailure { loadedPlaylist = null; screen = Screen.ACTIVATION }
+                            }
+                        }
                     }
                 )
                 Screen.HOME -> HomeScreen(
                     playlist = loadedPlaylist,
                     onManage = { screen = Screen.SETTINGS },
+                    onPlaylists = { screen = Screen.PLAYLISTS },
                     onOpenLive = { screen = Screen.LIVE_TV },
                     onOpenMovies = { screen = Screen.MOVIES },
                     onOpenSeries = { screen = Screen.SERIES },
@@ -262,11 +301,21 @@ private fun App() {
                             }
                             .onFailure { message(it.message ?: "Playlist could not be renamed") }
                     },
-                    onReplace = { screen = Screen.ACTIVATION },
+                    onReplace = { screen = Screen.MANUAL },
                     onRemove = {
                         playlistRepository.clearSavedSource()
-                        loadedPlaylist = null
-                        screen = Screen.ACTIVATION
+                        savedPlaylists = playlistRepository.savedSources()
+                        val next = playlistRepository.savedSource()
+                        if (next == null) {
+                            loadedPlaylist = null
+                            screen = Screen.ACTIVATION
+                        } else {
+                            scope.launch {
+                                playlistRepository.load(next)
+                                    .onSuccess { loadedPlaylist = it; screen = Screen.HOME }
+                                    .onFailure { loadedPlaylist = null; screen = Screen.ACTIVATION }
+                            }
+                        }
                         message("Playlist removed")
                     },
                     onMessage = message
@@ -598,9 +647,111 @@ private fun ManualPlaylistScreen(
 }
 
 @Composable
+private fun PlaylistManagerScreen(
+    sources: List<PlaylistInput>,
+    activeSource: PlaylistInput?,
+    onBack: () -> Unit,
+    onAdd: () -> Unit,
+    onSelect: (PlaylistInput) -> Unit,
+    onRemove: (PlaylistInput) -> Unit
+) {
+    var removing by remember { mutableStateOf<PlaylistInput?>(null) }
+    removing?.let { source ->
+        AlertDialog(
+            onDismissRequest = { removing = null },
+            icon = { Icon(Icons.Default.DeleteForever, null) },
+            title = { Text("Remove ${source.name}?") },
+            text = { Text("The saved login for this playlist will be removed from this device.") },
+            confirmButton = {
+                TextButton(onClick = { removing = null; onRemove(source) }) {
+                    Text("Remove", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = { TextButton(onClick = { removing = null }) { Text("Cancel") } }
+        )
+    }
+    PremiumBackground {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
+                Text("Playlists", Modifier.weight(1f), fontSize = 27.sp, fontWeight = FontWeight.Black)
+                Button(onClick = onAdd) {
+                    Icon(Icons.Default.Add, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("Add")
+                }
+            }
+            Text(
+                "Switch between saved playlists without replacing or deleting the others.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(bottom = 24.dp)
+            ) {
+                items(sources) { source ->
+                    val active = activeSource?.let {
+                        source.kind == it.kind &&
+                            source.address == it.address &&
+                            source.username == it.username
+                    } == true
+                    ElevatedCard(
+                        onClick = { if (!active) onSelect(source) },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.elevatedCardColors(
+                            containerColor = if (active) Cyan.copy(alpha = .14f) else MaterialTheme.colorScheme.surface
+                        ),
+                        shape = RoundedCornerShape(18.dp)
+                    ) {
+                        Row(
+                            Modifier.fillMaxWidth().padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                if (source.kind == PlaylistKind.PROVIDER_LOGIN) Icons.Default.AccountCircle else Icons.Default.Link,
+                                null,
+                                tint = if (active) Cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(30.dp)
+                            )
+                            Spacer(Modifier.width(12.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(source.name, fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                                Text(
+                                    if (active) "Active playlist" else if (source.username.isNotBlank()) "Provider login • ${source.username}" else "M3U playlist",
+                                    color = if (active) Cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                            if (!active) {
+                                TextButton(onClick = { onSelect(source) }) { Text("Switch") }
+                            }
+                            IconButton(onClick = { removing = source }) {
+                                Icon(Icons.Default.DeleteOutline, "Remove playlist", tint = MaterialTheme.colorScheme.error)
+                            }
+                        }
+                    }
+                }
+                item {
+                    OutlinedButton(onClick = onAdd, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                        Icon(Icons.Default.AddCircleOutline, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Add another playlist")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun HomeScreen(
     playlist: LoadedPlaylist?,
     onManage: () -> Unit,
+    onPlaylists: () -> Unit,
     onOpenLive: () -> Unit,
     onOpenMovies: () -> Unit,
     onOpenSeries: () -> Unit,
@@ -650,7 +801,7 @@ private fun HomeScreen(
             ) {
                 AssistChip(onClick = { onMessage("No favorites yet") }, label = { Text("Favorites") }, leadingIcon = { Icon(Icons.Default.Star, null) })
                 AssistChip(onClick = { onMessage("No viewing history yet") }, label = { Text("Recently watched") }, leadingIcon = { Icon(Icons.Default.History, null) })
-                AssistChip(onClick = onManage, label = { Text("Playlists") }, leadingIcon = { Icon(Icons.Default.PlaylistPlay, null) })
+                AssistChip(onClick = onPlaylists, label = { Text("Playlists") }, leadingIcon = { Icon(Icons.Default.PlaylistPlay, null) })
             }
             HomeDeviceInfoBar(playlist = playlist)
         }

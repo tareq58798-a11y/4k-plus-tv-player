@@ -41,7 +41,69 @@ class PlaylistRepository(context: Context) {
         }.recoverCatching { throw friendlyError(it) }
     }
 
+    fun savedSources(): List<PlaylistInput> {
+        val stored = preferences.getString("sources_json", null)
+        if (!stored.isNullOrBlank()) {
+            return runCatching {
+                val array = JSONArray(stored)
+                buildList {
+                    for (index in 0 until array.length()) {
+                        val item = array.getJSONObject(index)
+                        val kind = PlaylistKind.valueOf(item.getString("kind"))
+                        add(
+                            PlaylistInput(
+                                name = item.getString("name"),
+                                kind = kind,
+                                address = item.getString("address"),
+                                username = item.optString("username"),
+                                password = item.optString("password")
+                            )
+                        )
+                    }
+                }
+            }.getOrDefault(emptyList())
+        }
+        val legacy = legacySavedSource() ?: return emptyList()
+        writeSources(listOf(legacy), sourceId(legacy))
+        return listOf(legacy)
+    }
+
     fun savedSource(): PlaylistInput? {
+        val sources = savedSources()
+        if (sources.isEmpty()) return null
+        val activeId = preferences.getString("active_source_id", null)
+        return sources.firstOrNull { sourceId(it) == activeId } ?: sources.first()
+    }
+
+    fun selectSavedSource(input: PlaylistInput) {
+        require(savedSources().any { sourceId(it) == sourceId(input) }) { "Playlist is no longer saved." }
+        writeActiveSource(input)
+    }
+
+    fun renameSavedSource(name: String) {
+        val cleaned = name.trim()
+        require(cleaned.isNotBlank()) { "Playlist name cannot be empty." }
+        val active = savedSource() ?: throw IllegalStateException("No saved playlist.")
+        val renamed = active.copy(name = cleaned)
+        val updated = savedSources().map { if (sourceId(it) == sourceId(active)) renamed else it }
+        writeSources(updated, sourceId(renamed))
+        writeActiveSource(renamed)
+    }
+
+    fun clearSavedSource() {
+        val active = savedSource()
+        val remaining = if (active == null) emptyList() else savedSources().filterNot { sourceId(it) == sourceId(active) }
+        preferences.edit().remove("name").remove("kind").remove("address").remove("username").remove("password").apply()
+        if (remaining.isEmpty()) {
+            preferences.edit().remove("sources_json").remove("active_source_id").apply()
+        } else {
+            writeSources(remaining, sourceId(remaining.first()))
+            writeActiveSource(remaining.first())
+        }
+        if (cacheFile.exists()) cacheFile.delete()
+    }
+
+    private fun legacySavedSource(): PlaylistInput? {
         val name = preferences.getString("name", null) ?: return null
         val kind = preferences.getString("kind", null)?.let {
             runCatching { PlaylistKind.valueOf(it) }.getOrNull()
@@ -56,15 +118,29 @@ class PlaylistRepository(context: Context) {
         )
     }
 
-    fun renameSavedSource(name: String) {
-        val cleaned = name.trim()
-        require(cleaned.isNotBlank()) { "Playlist name cannot be empty." }
-        preferences.edit().putString("name", cleaned).apply()
+    private fun sourceId(input: PlaylistInput): String =
+        "${input.kind.name}|${input.address.trim()}|${input.username.trim()}"
+
+    private fun writeSources(sources: List<PlaylistInput>, activeId: String) {
+        val array = JSONArray()
+        sources.forEach { source ->
+            array.put(JSONObject().apply {
+                put("name", source.name)
+                put("kind", source.kind.name)
+                put("address", source.address)
+                put("username", source.username)
+                put("password", source.password)
+            })
+        }
+        preferences.edit().putString("sources_json", array.toString())
+            .putString("active_source_id", activeId).apply()
     }
 
-    fun clearSavedSource() {
-        preferences.edit().clear().apply()
-        if (cacheFile.exists()) cacheFile.delete()
+    private fun writeActiveSource(input: PlaylistInput) {
+        preferences.edit().putString("active_source_id", sourceId(input))
+            .putString("name", input.name.trim()).putString("kind", input.kind.name)
+            .putString("address", input.address.trim()).putString("username", input.username)
+            .putString("password", input.password).apply()
     }
 
     suspend fun loadCached(): LoadedPlaylist? = withContext(Dispatchers.IO) {
@@ -402,9 +478,12 @@ class PlaylistRepository(context: Context) {
     }
 
     private fun saveSource(input: PlaylistInput) {
-        preferences.edit().putString("name", input.name.trim()).putString("kind", input.kind.name)
-            .putString("address", input.address.trim()).putString("username", input.username)
-            .putString("password", input.password).apply()
+        val cleaned = input.copy(name = input.name.trim(), address = input.address.trim())
+        val id = sourceId(cleaned)
+        val current = savedSources()
+        val updated = current.filterNot { sourceId(it) == id } + cleaned
+        writeSources(updated, id)
+        writeActiveSource(cleaned)
     }
 
     private fun saveCache(playlist: LoadedPlaylist) {
