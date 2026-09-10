@@ -2196,6 +2196,7 @@ private fun PlaybackOptionsOverlay(
     modifier: Modifier = Modifier,
     player: Player,
     fullscreen: Boolean,
+    showFullscreen: Boolean = true,
     onFullscreenChange: (Boolean) -> Unit,
     subtitlesEnabled: Boolean,
     onSubtitlesEnabledChange: (Boolean) -> Unit,
@@ -2302,8 +2303,10 @@ private fun PlaybackOptionsOverlay(
                     }
                 }
             }
-            IconButton(onClick = { onFullscreenChange(!fullscreen) }, modifier = Modifier.size(38.dp)) {
-                Icon(if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
+            if (showFullscreen) {
+                IconButton(onClick = { onFullscreenChange(!fullscreen) }, modifier = Modifier.size(38.dp)) {
+                    Icon(if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
+                }
             }
         }
     }
@@ -2511,6 +2514,10 @@ private fun LiveChannelPreview(
                             )
                             resizeMode = videoResizeMode
                             this.player = player
+                            if (hostedFullscreen) {
+                                findViewById<android.view.View>(androidx.media3.ui.R.id.exo_center_controls)?.visibility =
+                                    android.view.View.GONE
+                            }
                             installDoubleTapSeek(this, player, skipSeconds, fullscreenDoubleTapExit) { forward ->
                             seekFeedback = forward to System.nanoTime()
                         }
@@ -2519,6 +2526,8 @@ private fun LiveChannelPreview(
                     update = {
                         it.player = player
                         it.resizeMode = videoResizeMode
+                        it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_center_controls)?.visibility =
+                            if (hostedFullscreen) android.view.View.GONE else android.view.View.VISIBLE
                         applyRequestedAspectRatio(it, videoMode)
                         installDoubleTapSeek(it, player, skipSeconds, fullscreenDoubleTapExit) { forward ->
                         seekFeedback = forward to System.nanoTime()
@@ -2547,6 +2556,7 @@ private fun LiveChannelPreview(
                         .padding(8.dp),
                     player = player,
                     fullscreen = fullscreen,
+                    showFullscreen = !hostedFullscreen && onRequestFullscreen == null,
                     onFullscreenChange = { requested ->
                         if (requested && onRequestFullscreen != null) onRequestFullscreen() else fullscreen = requested
                     },
@@ -2577,7 +2587,10 @@ private fun LiveChannelPreview(
                             .then(
                                 if (fullscreen || hostedFullscreen) Modifier
                                     .windowInsetsPadding(WindowInsets.displayCutout)
-                                    .padding(horizontal = 16.dp)
+                                    .padding(
+                                        start = if (hostedFullscreen) 64.dp else 16.dp,
+                                        end = 16.dp
+                                    )
                                 else Modifier
                             )
                             .padding(8.dp)
@@ -2600,7 +2613,12 @@ private fun LiveChannelPreview(
                                 color = Color.White,
                                 fontWeight = FontWeight.SemiBold,
                                 maxLines = 2,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable(enabled = onFullscreenDoubleTap != null) {
+                                        onFullscreenDoubleTap?.invoke()
+                                    }
+                                    .padding(vertical = 10.dp)
                             )
                             IconButton(
                                 onClick = { next?.let(onChannelChange) },
