@@ -26,6 +26,8 @@ import com.fourkplus.tvplayer.data.MediaKind
 import com.fourkplus.tvplayer.data.PlaylistInput
 import com.fourkplus.tvplayer.ui.theme.*
 
+private enum class SettingsPage { ROOT, PLAYLIST, PLAYBACK, APPEARANCE, HISTORY, CATEGORIES, PARENTAL }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun SettingsScreen(
@@ -40,7 +42,10 @@ internal fun SettingsScreen(
     onRemove: () -> Unit,
     onMessage: (String) -> Unit
 ) {
-    BackHandler(onBack = onBack)
+    var settingsPage by remember { mutableStateOf(SettingsPage.ROOT) }
+    BackHandler {
+        if (settingsPage == SettingsPage.ROOT) onBack() else settingsPage = SettingsPage.ROOT
+    }
     val context = LocalContext.current
     val playback = remember { context.getSharedPreferences("playback_settings", Context.MODE_PRIVATE) }
     val parental = remember { context.getSharedPreferences("parental_settings", Context.MODE_PRIVATE) }
@@ -108,16 +113,47 @@ internal fun SettingsScreen(
 
     Column(Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 14.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
-            Text("Settings", fontSize = 27.sp, fontWeight = FontWeight.Black)
+            IconButton(onClick = { if (settingsPage == SettingsPage.ROOT) onBack() else settingsPage = SettingsPage.ROOT }) { Icon(Icons.Default.ArrowBack, "Back") }
+            Text(if (settingsPage == SettingsPage.ROOT) "Settings" else settingsPage.name.lowercase().replaceFirstChar(Char::uppercase), fontSize = 27.sp, fontWeight = FontWeight.Black)
         }
         Spacer(Modifier.height(8.dp))
+        if (settingsPage == SettingsPage.ROOT) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+                contentPadding = PaddingValues(bottom = 30.dp)
+            ) {
+                item {
+                    SettingsMenuGroup {
+                        SettingsMenuRow(Icons.Default.PlaylistPlay, "Playlist", Orange) { settingsPage = SettingsPage.PLAYLIST }
+                        SettingsMenuRow(Icons.Default.PlayCircle, "Playback", Cyan) { settingsPage = SettingsPage.PLAYBACK }
+                        SettingsMenuRow(Icons.Default.Palette, "Appearance", BrandBlue) { settingsPage = SettingsPage.APPEARANCE }
+                    }
+                }
+                item {
+                    SettingsMenuGroup {
+                        SettingsMenuRow(Icons.Default.History, "Privacy and history", Cyan) { settingsPage = SettingsPage.HISTORY }
+                        SettingsMenuRow(Icons.Default.VisibilityOff, "Category visibility", Orange) { settingsPage = SettingsPage.CATEGORIES }
+                        SettingsMenuRow(Icons.Default.AdminPanelSettings, "Parental controls", BrandBlue) { settingsPage = SettingsPage.PARENTAL }
+                    }
+                }
+                item {
+                    Text(
+                        "4K Plus TV Player • v0.11.4",
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+            return@Column
+        }
         LazyColumn(
             Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = PaddingValues(bottom = 30.dp)
         ) {
-            item {
+            if (settingsPage == SettingsPage.PLAYLIST) item {
                 SettingsSection("Playlist", Icons.Default.PlaylistPlay) {
                     OutlinedTextField(
                         value = playlistName,
@@ -150,7 +186,7 @@ internal fun SettingsScreen(
                 }
             }
 
-            item {
+            if (settingsPage == SettingsPage.PLAYBACK) item {
                 SettingsSection("Playback", Icons.Default.PlayCircle) {
                     Text("Skip interval", fontWeight = FontWeight.Bold)
                     Row(
@@ -241,7 +277,7 @@ internal fun SettingsScreen(
                 }
             }
 
-            item {
+            if (settingsPage == SettingsPage.APPEARANCE) item {
                 SettingsSection("Appearance", Icons.Default.Palette) {
                     Text("Theme", fontWeight = FontWeight.Bold)
                     ThemeChoice.entries.forEach { choice ->
@@ -254,7 +290,7 @@ internal fun SettingsScreen(
                 }
             }
 
-            item {
+            if (settingsPage == SettingsPage.HISTORY) item {
                 SettingsSection("Privacy and history", Icons.Default.History) {
                     SettingsAction(Icons.Default.Movie, "Clear movie activity", "Favorites, recent movies, and progress", {
                         context.getSharedPreferences("movie_library", Context.MODE_PRIVATE).edit().clear().apply()
@@ -271,8 +307,8 @@ internal fun SettingsScreen(
                 }
             }
 
-            item {
-                SettingsSection("Hide categories", Icons.Default.VisibilityOff) {
+            if (settingsPage == SettingsPage.CATEGORIES) item {
+                SettingsSection("Category visibility", Icons.Default.VisibilityOff) {
                     Text(
                         "Choose which categories appear on the main screens. You can restore anything hidden here.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -403,7 +439,7 @@ internal fun SettingsScreen(
                 }
             }
 
-            item {
+            if (settingsPage == SettingsPage.PARENTAL) item {
                 SettingsSection("Parental controls", Icons.Default.AdminPanelSettings) {
                     if (pinHash == null) {
                         SettingsAction(Icons.Default.Pin, "Create parental PIN", "Protect restricted content settings", {
@@ -440,12 +476,44 @@ internal fun SettingsScreen(
 
             item {
                 Text(
-                    "4K Plus TV Player • v0.11.1",
+                    "4K Plus TV Player • v0.11.4",
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun SettingsMenuGroup(content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .96f),
+        tonalElevation = 3.dp
+    ) {
+        Column(Modifier.fillMaxWidth(), content = content)
+    }
+}
+
+@Composable
+private fun SettingsMenuRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    title: String,
+    tint: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit
+) {
+    Surface(onClick = onClick, color = androidx.compose.ui.graphics.Color.Transparent) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 17.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, null, tint = tint, modifier = Modifier.size(23.dp))
+            Spacer(Modifier.width(16.dp))
+            Text(title, Modifier.weight(1f), fontSize = 17.sp, fontWeight = FontWeight.Medium)
+            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
