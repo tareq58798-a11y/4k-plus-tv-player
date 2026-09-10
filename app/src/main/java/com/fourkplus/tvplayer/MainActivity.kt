@@ -1,9 +1,11 @@
 package com.fourkplus.tvplayer
 
+import android.app.Activity
 import android.content.Intent
 import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -77,6 +79,9 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import com.fourkplus.tvplayer.ui.theme.*
 import com.fourkplus.tvplayer.data.LoadedPlaylist
 import com.fourkplus.tvplayer.data.MediaKind
@@ -96,6 +101,11 @@ class MainActivity : ComponentActivity() {
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         )
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q) {
             window.isNavigationBarContrastEnforced = false
             window.isStatusBarContrastEnforced = false
@@ -120,6 +130,21 @@ private fun App() {
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val landscapeApp = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    DisposableEffect(landscapeApp) {
+        val activity = context as? Activity
+        val controller = activity?.window?.let { WindowCompat.getInsetsController(it, it.decorView) }
+        if (landscapeApp) {
+            controller?.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose {
+            if (landscapeApp) controller?.show(WindowInsetsCompat.Type.systemBars())
+        }
+    }
     val appPreferences = remember { context.getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE) }
     val playlistRepository = remember { PlaylistRepository(context.applicationContext) }
     var loadedPlaylist by remember { mutableStateOf<LoadedPlaylist?>(null) }
@@ -155,7 +180,7 @@ private fun App() {
         Scaffold(
             snackbarHost = { SnackbarHost(snackbar) },
             containerColor = MaterialTheme.colorScheme.background,
-            contentWindowInsets = WindowInsets.safeDrawing,
+            contentWindowInsets = if (landscapeApp) WindowInsets(0, 0, 0, 0) else WindowInsets.safeDrawing,
             modifier = Modifier.fillMaxSize()
         ) { scaffoldPadding ->
             Box(Modifier.fillMaxSize().padding(scaffoldPadding)) {
@@ -824,6 +849,28 @@ private fun MoviesScreen(
     }
 
     PremiumBackground {
+        if (view == MovieView.DETAILS) {
+            val pageBackdrop = details?.backdropUrl ?: details?.posterUrl ?: selectedMovie?.logoUrl
+            if (!pageBackdrop.isNullOrBlank()) {
+                AsyncImage(
+                    model = pageBackdrop,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Black.copy(alpha = .56f),
+                                MaterialTheme.colorScheme.background.copy(alpha = .78f),
+                                MaterialTheme.colorScheme.background.copy(alpha = .96f)
+                            )
+                        )
+                    )
+                )
+            }
+        }
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val landscape = maxWidth > maxHeight
             if (landscape && view in setOf(MovieView.BROWSE, MovieView.CATEGORY)) {
@@ -1167,7 +1214,9 @@ private fun LandscapeLiveBrowser(
                 onChannelChange = { next ->
                     onChannel(next)
                     fullscreenChannel = next
-                }
+                },
+                hostedFullscreen = true,
+                onFullscreenDoubleTap = { fullscreenChannel = null }
             )
         }
     }
@@ -1537,6 +1586,9 @@ internal fun MoviePlayer(
             player.release()
         }
     }
+    val fullscreenDoubleTapExit: (() -> Unit)? = if ((fullscreen || hostedFullscreen) && onFullscreenDoubleTap != null) {
+        { fullscreen = false; onFullscreenDoubleTap() }
+    } else null
     val playerContent: @Composable (Modifier, Shape) -> Unit = { contentModifier, shape ->
         Surface(contentModifier, shape, color = Color.Black) {
             Box(Modifier.fillMaxSize()) {
@@ -1857,6 +1909,8 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
                             channel = previewChannel,
                             channelList = playerChannels,
                             onChannelChange = { rememberChannel(it) },
+                            hostedFullscreen = false,
+                            onFullscreenDoubleTap = { view = LiveView.BROWSE },
                             externalPlayback = true,
                             modifier = if (landscape) Modifier.fillMaxWidth().height(230.dp)
                             else Modifier.fillMaxWidth().aspectRatio(16f / 9f)
@@ -2103,6 +2157,7 @@ private fun installDoubleTapSeek(
     view: PlayerView,
     player: Player,
     skipSeconds: Int,
+    onDoubleTapExit: (() -> Unit)? = null,
     onSeekFeedback: (Boolean) -> Unit
 ) {
     val detector = android.view.GestureDetector(
@@ -2111,6 +2166,11 @@ private fun installDoubleTapSeek(
             override fun onDown(event: android.view.MotionEvent): Boolean = true
 
             override fun onDoubleTap(event: android.view.MotionEvent): Boolean {
+                if (onDoubleTapExit != null) {
+                    view.hideController()
+                    onDoubleTapExit()
+                    return true
+                }
                 if (!player.isCurrentMediaItemSeekable) return false
                 val intervalMs = skipSeconds * 1_000L
                 val destination = if (event.x < view.width / 2f) {
@@ -2307,7 +2367,9 @@ private fun LiveChannelPreview(
     modifier: Modifier = Modifier,
     externalPlayback: Boolean = false,
     channelList: List<PlaylistItem> = emptyList(),
-    onChannelChange: (PlaylistItem) -> Unit = {}
+    onChannelChange: (PlaylistItem) -> Unit = {},
+    hostedFullscreen: Boolean = false,
+    onFullscreenDoubleTap: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
@@ -2447,7 +2509,7 @@ private fun LiveChannelPreview(
                             )
                             resizeMode = videoResizeMode
                             this.player = player
-                            installDoubleTapSeek(this, player, skipSeconds) { forward ->
+                            installDoubleTapSeek(this, player, skipSeconds, fullscreenDoubleTapExit) { forward ->
                             seekFeedback = forward to System.nanoTime()
                         }
                         }
@@ -2456,7 +2518,7 @@ private fun LiveChannelPreview(
                         it.player = player
                         it.resizeMode = videoResizeMode
                         applyRequestedAspectRatio(it, videoMode)
-                        installDoubleTapSeek(it, player, skipSeconds) { forward ->
+                        installDoubleTapSeek(it, player, skipSeconds, fullscreenDoubleTapExit) { forward ->
                         seekFeedback = forward to System.nanoTime()
                     }
                     },
