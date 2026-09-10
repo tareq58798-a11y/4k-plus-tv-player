@@ -1,6 +1,7 @@
 package com.fourkplus.tvplayer
 
 import android.content.Context
+import android.content.res.Configuration
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.BackHandler
@@ -29,6 +30,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -371,19 +373,19 @@ private fun LandscapeSeriesBrowser(
     }
     val displayed = if (search.isBlank()) base else seriesItems.filter { it.name.contains(search.trim(), true) }
     Row(
-        Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
+        Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Surface(
-            Modifier.width(250.dp).fillMaxHeight(),
-            shape = RoundedCornerShape(18.dp),
+            Modifier.width(205.dp).fillMaxHeight(),
+            shape = RoundedCornerShape(15.dp),
             color = Color.Black.copy(alpha = .34f),
             border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))
         ) {
-            Column(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.fillMaxSize().padding(9.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
-                    Text("Series", fontSize = 22.sp, fontWeight = FontWeight.Black)
+                    Text("Series", fontSize = 19.sp, fontWeight = FontWeight.Black)
                 }
                 SeriesSearch(search, onSearch)
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -408,8 +410,8 @@ private fun LandscapeSeriesBrowser(
             }
         }
         Column(Modifier.weight(1f).fillMaxHeight()) {
-            Text(selectedCategory.ifBlank { "Series" }, fontSize = 24.sp, fontWeight = FontWeight.Black)
-            Spacer(Modifier.height(10.dp))
+            Text(selectedCategory.ifBlank { "Series" }, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1)
+            Spacer(Modifier.height(6.dp))
             SeriesGrid(displayed, favoriteIds, onFavorite, onSeries, Modifier.weight(1f), true)
         }
     }
@@ -497,10 +499,10 @@ private fun SeriesGrid(
         }
     } else {
         LazyVerticalGrid(
-            columns = GridCells.Fixed(if (landscape) 6 else 3),
+            columns = GridCells.Fixed(if (landscape) 7 else 3),
             modifier = modifier,
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            horizontalArrangement = Arrangement.spacedBy(if (landscape) 7.dp else 10.dp),
+            verticalArrangement = Arrangement.spacedBy(if (landscape) 9.dp else 16.dp),
             contentPadding = PaddingValues(bottom = 20.dp)
         ) {
             gridItems(seriesItems) { series ->
@@ -574,13 +576,14 @@ private fun SeriesDetails(
     val episodes = details?.episodes.orEmpty().filter { it.seasonNumber == selectedSeason }
     val seasons = details?.seasons.orEmpty()
     val displayTitle = details?.originalTitle ?: series.name
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(if (landscape) 8.dp else 14.dp)
     ) {
         Surface(
-            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-            shape = RoundedCornerShape(20.dp),
+            Modifier.fillMaxWidth().then(if (landscape) Modifier.height(170.dp) else Modifier.aspectRatio(16f / 9f)),
+            shape = RoundedCornerShape(if (landscape) 14.dp else 20.dp),
             color = Color.Black,
             shadowElevation = 10.dp
         ) {
@@ -590,7 +593,7 @@ private fun SeriesDetails(
                 }
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .9f)))))
                 Surface(
-                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(104.dp).aspectRatio(2f / 3f),
+                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(if (landscape) 80.dp else 104.dp).aspectRatio(2f / 3f),
                     shape = RoundedCornerShape(13.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shadowElevation = 12.dp,
@@ -606,7 +609,7 @@ private fun SeriesDetails(
                     fontSize = 21.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 3,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 132.dp, end = 14.dp, bottom = 16.dp)
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = if (landscape) 108.dp else 132.dp, end = 14.dp, bottom = if (landscape) 10.dp else 16.dp)
                 )
             }
         }
