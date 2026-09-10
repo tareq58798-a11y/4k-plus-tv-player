@@ -101,7 +101,10 @@ class PlaylistRepository(context: Context) {
             writeSources(remaining, sourceId(remaining.first()))
             writeActiveSource(remaining.first())
         }
-        active?.let { sourceCacheFile(it).delete() }
+        active?.let {
+            sourceCacheFile(it).delete()
+            preferences.edit().remove(fallbackKey(it)).apply()
+        }
         if (cacheFile.exists()) cacheFile.delete()
     }
 
@@ -198,7 +201,7 @@ class PlaylistRepository(context: Context) {
 
     suspend fun movieDetails(movie: PlaylistItem): Result<MovieDetailsInfo> = withContext(Dispatchers.IO) {
         runCatching {
-            val source = savedSource() ?: throw IllegalArgumentException("No saved provider is available.")
+            val source = sourceForDetails() ?: throw IllegalArgumentException("No saved provider is available.")
             val movieId = movie.channelId
             require(source.kind == PlaylistKind.PROVIDER_LOGIN && !movieId.isNullOrBlank()) {
                 "Detailed information is not available for this playlist."
@@ -241,7 +244,7 @@ class PlaylistRepository(context: Context) {
 
     suspend fun seriesDetails(series: PlaylistItem): Result<SeriesDetailsInfo> = withContext(Dispatchers.IO) {
         runCatching {
-            val source = savedSource() ?: throw IllegalArgumentException("No saved provider is available.")
+            val source = sourceForDetails() ?: throw IllegalArgumentException("No saved provider is available.")
             val seriesId = series.channelId
             require(source.kind == PlaylistKind.PROVIDER_LOGIN && !seriesId.isNullOrBlank()) {
                 "Series information is not available for this playlist."
@@ -306,13 +309,59 @@ class PlaylistRepository(context: Context) {
         }.recoverCatching { throw friendlyError(it) }
     }
 
-    private fun loadM3u(input: PlaylistInput): LoadedPlaylist {
-        var lastError: Exception? = null
-        for (address in addressCandidates(input.address)) {
-            try { return M3uParser.parse(input.name, download(address)) }
-            catch (error: Exception) { lastError = error }
+    private class PlaylistHttpException(val status: Int, message: String) : IllegalArgumentException(message)
+
+    private fun fallbackKey(input: PlaylistInput): String = "provider_fallback_" + sourceCacheFile(input).name
+
+    private fun providerFromM3u(input: PlaylistInput): PlaylistInput? = runCatching {
+        if (input.kind != PlaylistKind.M3U_URL) return@runCatching null
+        val uri = URI(addressCandidates(input.address).single())
+        if (!uri.path.orEmpty().endsWith("/get.php")) return@runCatching null
+        val parameters = uri.rawQuery.orEmpty().split('&').map { parameter ->
+            val key = java.net.URLDecoder.decode(parameter.substringBefore('='), "UTF-8")
+            val value = java.net.URLDecoder.decode(parameter.substringAfter('=', ""), "UTF-8")
+            key to value
         }
-        throw lastError ?: IllegalArgumentException("The playlist address could not be reached.")
+        fun singleValue(key: String): String? =
+            parameters.filter { it.first == key }.singleOrNull()?.second?.takeIf { it.isNotBlank() }
+        val username = singleValue("username") ?: return@runCatching null
+        val password = singleValue("password") ?: return@runCatching null
+        if (uri.rawUserInfo != null || uri.fragment != null) return@runCatching null
+        val base = "${uri.scheme}://${uri.rawAuthority}" + uri.rawPath.removeSuffix("/get.php")
+        input.copy(kind = PlaylistKind.PROVIDER_LOGIN, address = base, username = username, password = password)
+    }.getOrNull()
+
+    private fun sourceForDetails(): PlaylistInput? {
+        val source = savedSource() ?: return null
+        return if (source.kind == PlaylistKind.M3U_URL && preferences.getBoolean(fallbackKey(source), false)) {
+            providerFromM3u(source)
+        } else source
+    }
+
+    private fun loadM3u(input: PlaylistInput): LoadedPlaylist {
+        val address = addressCandidates(input.address).single()
+        try {
+            val playlist = M3uParser.parse(input.name, download(address))
+            preferences.edit().remove(fallbackKey(input)).apply()
+            return playlist
+        } catch (error: PlaylistHttpException) {
+            if (error.status != 403) throw error
+            val provider = providerFromM3u(input) ?: throw error
+            try {
+                val playlist = loadProvider(provider)
+                // Keep the original M3U identity and URL for switching and caching.
+                // Remember how the catalog was loaded so details use provider stream IDs.
+                preferences.edit().putBoolean(fallbackKey(input), true).apply()
+                return playlist
+            } catch (fallbackError: Exception) {
+                if (fallbackError is kotlinx.coroutines.CancellationException) throw fallbackError
+                throw IllegalArgumentException(
+                    "The M3U download was rejected (403), and the provider login fallback also failed. " +
+                        "Try Provider Login to check the connection.",
+                    fallbackError
+                )
+            }
+        }
     }
 
     private fun loadProvider(input: PlaylistInput): LoadedPlaylist {
@@ -506,7 +555,7 @@ class PlaylistRepository(context: Context) {
             }
             if (lastCode != 401 && lastCode != 403) break
         }
-        throw IllegalArgumentException(
+        throw PlaylistHttpException(lastCode,
             if (lastCode == 401 || lastCode == 403)
                 "The playlist server rejected this request (HTTP $lastCode; $lastRoute). The entered address was not changed."
             else "The playlist request failed (HTTP $lastCode; $lastRoute). Try again shortly."
