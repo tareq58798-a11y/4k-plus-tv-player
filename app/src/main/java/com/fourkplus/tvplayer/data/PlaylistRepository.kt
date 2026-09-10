@@ -429,8 +429,8 @@ class PlaylistRepository(context: Context) {
     private fun containsLatinText(value: String): Boolean = value.any { it in 'A'..'Z' || it in 'a'..'z' }
 
     private fun normalizeServerBase(value: String): String {
-        val uri = URI(value)
-        val scheme = if (uri.port == 80 && uri.scheme.equals("https", true)) "http" else uri.scheme.lowercase()
+        val uri = URI(value.trim())
+        val scheme = uri.scheme.lowercase()
         val port = if (uri.port == -1) "" else ":${uri.port}"
         val path = uri.path.orEmpty().trimEnd('/').takeUnless { it == "/" }.orEmpty()
         return "$scheme://${uri.host}$port$path"
@@ -439,14 +439,12 @@ class PlaylistRepository(context: Context) {
     private fun addressCandidates(value: String): List<String> {
         val trimmed = value.trim()
         require(trimmed.isNotBlank()) { "Enter a playlist or server address." }
-        val candidates = when {
-            trimmed.startsWith("https://", true) && URI(trimmed).port == 80 ->
-                listOf(trimmed.replaceFirst(Regex("^https", RegexOption.IGNORE_CASE), "http"))
-            trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true) -> listOf(trimmed)
-            else -> listOf("http://$trimmed", "https://$trimmed")
+        val address = when {
+            trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true) -> trimmed
+            else -> "http://$trimmed"
         }
-        candidates.forEach { require(URI(it).host != null) { "Enter a valid server or playlist address." } }
-        return candidates
+        require(URI(address).host != null) { "Enter a valid server or playlist address." }
+        return listOf(address)
     }
 
     private fun download(url: String): String {

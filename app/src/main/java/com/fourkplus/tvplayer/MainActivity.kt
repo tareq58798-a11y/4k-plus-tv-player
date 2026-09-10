@@ -117,6 +117,9 @@ class MainActivity : ComponentActivity() {
 private enum class Screen { LOADING, ACTIVATION, MANUAL, PLAYLISTS, HOME, LIVE_TV, MOVIES, SERIES, SETTINGS }
 internal enum class ThemeChoice { SYSTEM, LIGHT, DARK }
 
+private fun playlistMemoryKey(source: PlaylistInput): String =
+    "${source.kind.name}|${source.address.trim()}|${source.username.trim()}"
+
 @Composable
 private fun App() {
     var screen by remember { mutableStateOf(Screen.LOADING) }
@@ -149,30 +152,38 @@ private fun App() {
     val playlistRepository = remember { PlaylistRepository(context.applicationContext) }
     var loadedPlaylist by remember { mutableStateOf<LoadedPlaylist?>(null) }
     var savedPlaylists by remember { mutableStateOf(playlistRepository.savedSources()) }
+    val playlistMemoryCache = remember { mutableStateMapOf<String, LoadedPlaylist>() }
     val message: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
 
     LaunchedEffect(Unit) {
         themeChoice = runCatching {
             ThemeChoice.valueOf(appPreferences.getString("theme", ThemeChoice.SYSTEM.name).orEmpty())
         }.getOrDefault(ThemeChoice.SYSTEM)
-        val cachedPlaylist = playlistRepository.loadCached()
-        if (cachedPlaylist != null) {
+        val activeSource = playlistRepository.savedSource()
+        val cachedPlaylist = playlistRepository.loadCached(activeSource)
+        if (cachedPlaylist != null && activeSource != null) {
             loadedPlaylist = cachedPlaylist
+            playlistMemoryCache[playlistMemoryKey(activeSource)] = cachedPlaylist
             screen = Screen.HOME
+        } else if (activeSource == null) {
+            screen = Screen.ACTIVATION
         } else {
-            val savedSource = playlistRepository.savedSource()
-            if (savedSource == null) {
-                screen = Screen.ACTIVATION
-            } else {
-                playlistRepository.load(savedSource)
-                    .onSuccess {
-                        loadedPlaylist = it
-                        screen = Screen.HOME
-                    }
-                    .onFailure {
-                        screen = Screen.ACTIVATION
-                        message("Saved playlist could not be refreshed. Please reconnect.")
-                    }
+            playlistRepository.load(activeSource)
+                .onSuccess {
+                    loadedPlaylist = it
+                    playlistMemoryCache[playlistMemoryKey(activeSource)] = it
+                    screen = Screen.HOME
+                }
+                .onFailure {
+                    screen = Screen.ACTIVATION
+                    message("Saved playlist could not be refreshed. Please reconnect.")
+                }
+        }
+        savedPlaylists = playlistRepository.savedSources()
+        savedPlaylists.forEach { source ->
+            val key = playlistMemoryKey(source)
+            if (key !in playlistMemoryCache) {
+                playlistRepository.loadCached(source)?.let { playlistMemoryCache[key] = it }
             }
         }
     }
@@ -211,6 +222,9 @@ private fun App() {
                     onConnected = {
                         loadedPlaylist = it
                         savedPlaylists = playlistRepository.savedSources()
+                        playlistRepository.savedSource()?.let { source ->
+                            playlistMemoryCache[playlistMemoryKey(source)] = it
+                        }
                         screen = Screen.HOME
                         message("${it.items.size} items loaded")
                     }
@@ -222,22 +236,39 @@ private fun App() {
                     onAdd = { screen = Screen.MANUAL },
                     onSelect = { source ->
                         scope.launch {
-                            playlistRepository.selectSavedSource(source)
-                            val cached = playlistRepository.loadCached(source)
-                            if (cached != null) {
-                                loadedPlaylist = cached
-                                savedPlaylists = playlistRepository.savedSources()
-                                screen = Screen.HOME
-                                message("${source.name} selected")
+                            val previousSource = playlistRepository.savedSource()
+                            if (previousSource != null && loadedPlaylist != null) {
+                                playlistMemoryCache[playlistMemoryKey(previousSource)] = loadedPlaylist!!
+                            }
+                            val key = playlistMemoryKey(source)
+                            val ready = playlistMemoryCache[key] ?: playlistRepository.loadCached(source)
+                            if (ready != null) {
+                                playlistMemoryCache[key] = ready
+                                if (screen == Screen.PLAYLISTS) {
+                                    playlistRepository.selectSavedSource(source)
+                                    loadedPlaylist = ready
+                                    savedPlaylists = playlistRepository.savedSources()
+                                    screen = Screen.HOME
+                                    message("${source.name} selected")
+                                }
                             } else {
+                                message("Preparing ${source.name} for its first switch…")
                                 playlistRepository.load(source)
                                     .onSuccess {
-                                        loadedPlaylist = it
-                                        savedPlaylists = playlistRepository.savedSources()
-                                        screen = Screen.HOME
-                                        message("${source.name} selected")
+                                        playlistMemoryCache[key] = it
+                                        if (screen == Screen.PLAYLISTS) {
+                                            loadedPlaylist = it
+                                            savedPlaylists = playlistRepository.savedSources()
+                                            screen = Screen.HOME
+                                            message("${source.name} selected")
+                                        } else {
+                                            previousSource?.let(playlistRepository::selectSavedSource)
+                                        }
                                     }
-                                    .onFailure { message(it.message ?: "Playlist could not be loaded") }
+                                    .onFailure {
+                                        previousSource?.let(playlistRepository::selectSavedSource)
+                                        message(it.message ?: "Playlist could not be loaded")
+                                    }
                             }
                         }
                     },
@@ -599,8 +630,11 @@ private fun ManualPlaylistScreen(
         }
         OutlinedTextField(name, { name = it }, label = { Text("Playlist name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(
-            address, { address = it.trim() },
+            address, { address = it },
             label = { Text(if (tab == 0) "M3U/M3U8 URL" else "Server address") },
+            supportingText = {
+                Text("The app keeps http:// or https:// exactly as entered. No protocol means http://.")
+            },
             trailingIcon = {
                 IconButton(onClick = { address = clipboard.getText()?.text.orEmpty().trim() }) {
                     Icon(Icons.Default.ContentPaste, "Paste")
