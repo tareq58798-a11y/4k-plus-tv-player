@@ -1108,7 +1108,6 @@ private fun LandscapeLiveBrowser(
                     items(channels) { channel ->
                         val selected = channelKey(channel) == selectedChannel?.let(::channelKey)
                         Surface(
-                            onClick = { onChannel(channel) },
                             modifier = Modifier.fillMaxWidth().pointerInput(channelKey(channel)) {
                                 detectTapGestures(
                                     onTap = { onChannel(channel) },
