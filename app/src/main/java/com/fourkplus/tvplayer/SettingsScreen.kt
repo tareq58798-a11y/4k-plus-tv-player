@@ -51,6 +51,11 @@ internal fun SettingsScreen(
         if (settingsPage == SettingsPage.ROOT) onBack() else settingsPage = SettingsPage.ROOT
     }
     val context = LocalContext.current
+    val appVersion = remember(context) {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        }.getOrNull().orEmpty().ifBlank { "Unknown" }
+    }
     val playback = remember { context.getSharedPreferences("playback_settings", Context.MODE_PRIVATE) }
     val parental = remember { context.getSharedPreferences("parental_settings", Context.MODE_PRIVATE) }
     var playlistName by remember(source?.name, playlist?.name) { mutableStateOf(source?.name ?: playlist?.name.orEmpty()) }
@@ -144,7 +149,7 @@ internal fun SettingsScreen(
                 }
                 item {
                     Text(
-                        "4K Plus TV Player • v0.13.0",
+                        "4K Plus TV Player • v0.13.1",
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         style = MaterialTheme.typography.bodySmall
@@ -203,7 +208,7 @@ internal fun SettingsScreen(
                 SettingsSection("App & playlist information", Icons.Default.Info) {
                     Text("Application", fontWeight = FontWeight.Bold)
                     InformationRow("App name", "4K Plus TV Player")
-                    InformationRow("Version", BuildConfig.VERSION_NAME)
+                    InformationRow("Version", appVersion)
                     InformationRow("Android", android.os.Build.VERSION.RELEASE)
                     HorizontalDivider()
                     Text("Active playlist", fontWeight = FontWeight.Bold)
@@ -520,7 +525,7 @@ internal fun SettingsScreen(
 
             item {
                 Text(
-                    "4K Plus TV Player • v0.13.0",
+                    "4K Plus TV Player • v0.13.1",
                     modifier = Modifier.fillMaxWidth(),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     style = MaterialTheme.typography.bodySmall
