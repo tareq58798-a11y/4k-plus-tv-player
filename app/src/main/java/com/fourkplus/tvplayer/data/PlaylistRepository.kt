@@ -450,49 +450,66 @@ class PlaylistRepository(context: Context) {
     private fun download(url: String): String {
         val userAgents = listOf("IPTVSmartersPro", "VLC/3.0.20 LibVLC/3.0.20", "Mozilla/5.0 (Android)")
         var lastCode = -1
+        var lastRoute = ""
         for (userAgent in userAgents) {
+            // Keep cookies within this download attempt, never across playlists.
+            val cookies = java.net.CookieManager(null, java.net.CookiePolicy.ACCEPT_ORIGINAL_SERVER)
             var current = URI(url)
+            val protocols = mutableListOf(current.scheme.uppercase())
+            val visited = mutableSetOf<URI>()
             for (redirectCount in 0 until 6) {
+                require(visited.add(current)) { "The playlist server returned a redirect loop." }
                 val connection = current.toURL().openConnection() as HttpURLConnection
-                connection.connectTimeout = 15_000
-                connection.readTimeout = 30_000
-                connection.instanceFollowRedirects = false
-                connection.requestMethod = "GET"
-                connection.setRequestProperty("User-Agent", userAgent)
-                connection.setRequestProperty("Accept", "*/*")
-                connection.setRequestProperty("Accept-Encoding", "identity")
-                connection.setRequestProperty("Connection", "close")
-                lastCode = connection.responseCode
-                when {
-                    lastCode in 200..299 -> {
-                        try {
-                            return readBody(connection)
-                        } finally {
-                            connection.disconnect()
+                try {
+                    connection.connectTimeout = 15_000
+                    connection.readTimeout = 30_000
+                    connection.instanceFollowRedirects = false
+                    connection.requestMethod = "GET"
+                    connection.setRequestProperty("User-Agent", userAgent)
+                    connection.setRequestProperty("Accept", "*/*")
+                    connection.setRequestProperty("Accept-Encoding", "identity")
+                    connection.setRequestProperty("Connection", "close")
+                    cookies.get(current, emptyMap()).forEach { (name, values) ->
+                        values.forEach { value -> connection.addRequestProperty(name, value) }
+                    }
+                    lastRoute = protocols.joinToString(" → ")
+                    try {
+                        lastCode = connection.responseCode
+                    } catch (error: javax.net.ssl.SSLException) {
+                        throw IllegalArgumentException(
+                            "Secure connection failed ($lastRoute). The entered address was not changed.", error
+                        )
+                    }
+                    cookies.put(current, connection.headerFields)
+                    when {
+                        lastCode in 200..299 -> return readBody(connection)
+                        lastCode in setOf(301, 302, 303, 307, 308) -> {
+                            val location = connection.getHeaderField("Location")
+                            require(!location.isNullOrBlank()) { "The provider returned an invalid redirect." }
+                            val redirected = current.resolve(location)
+                            require(
+                                redirected.scheme.equals("http", true) ||
+                                    redirected.scheme.equals("https", true)
+                            ) { "The provider returned an unsupported redirect." }
+                            require(redirectCount < 5) { "The playlist server returned too many redirects." }
+                            // Use the server's destination only for this request. Do not rewrite the saved URL.
+                            if (!redirected.scheme.equals(current.scheme, true)) {
+                                protocols.add(redirected.scheme.uppercase())
+                            }
+                            current = redirected
                         }
+                        else -> break
                     }
-                    lastCode in setOf(301, 302, 303, 307, 308) -> {
-                        val location = connection.getHeaderField("Location")
-                        connection.disconnect()
-                        require(!location.isNullOrBlank()) { "The provider returned an invalid redirect." }
-                        val redirected = current.resolve(location)
-                        require(
-                            redirected.scheme.equals("http", true) ||
-                                redirected.scheme.equals("https", true)
-                        ) { "The provider returned an unsupported redirect." }
-                        current = redirected
-                    }
-                    else -> {
-                        connection.disconnect()
-                        break
-                    }
+                } finally {
+                    connection.disconnect()
                 }
             }
             if (lastCode != 401 && lastCode != 403) break
         }
         throw IllegalArgumentException(
-            if (lastCode == 401 || lastCode == 403) "The provider denied access. Check the account details or connection limit."
-            else "The provider could not complete the request. Try again shortly."
+            if (lastCode == 401 || lastCode == 403)
+                "The playlist server rejected this request (HTTP $lastCode; $lastRoute). The entered address was not changed."
+            else "The playlist request failed (HTTP $lastCode; $lastRoute). Try again shortly."
         )
     }
 
@@ -511,7 +528,7 @@ class PlaylistRepository(context: Context) {
 
     private fun friendlyError(error: Throwable): Throwable = when {
         error is SocketException -> IllegalArgumentException("The server closed the connection. Verify the server address and try again.", error)
-        error.message?.contains("TLS", true) == true -> IllegalArgumentException("This server uses HTTP rather than HTTPS. Please use its HTTP address.", error)
+        error is javax.net.ssl.SSLException -> IllegalArgumentException("A secure connection to the playlist server could not be established.", error)
         error is org.json.JSONException -> IllegalArgumentException("This server returned an unsupported response. Confirm that it supports provider login.", error)
         else -> error
     }
