@@ -476,9 +476,10 @@ class PlaylistRepository(context: Context) {
                         connection.disconnect()
                         require(!location.isNullOrBlank()) { "The provider returned an invalid redirect." }
                         val redirected = current.resolve(location)
-                        require(redirected.scheme.equals(current.scheme, true)) {
-                            "The provider redirected ${current.scheme.uppercase()} to ${redirected.scheme.uppercase()}. Use the exact working server protocol."
-                        }
+                        require(
+                            redirected.scheme.equals("http", true) ||
+                                redirected.scheme.equals("https", true)
+                        ) { "The provider returned an unsupported redirect." }
                         current = redirected
                     }
                     else -> {
