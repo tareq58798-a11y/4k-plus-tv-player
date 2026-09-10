@@ -1,6 +1,7 @@
 package com.fourkplus.tvplayer
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -52,6 +53,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.input.pointer.pointerInput
@@ -1288,13 +1290,14 @@ private fun MovieDetails(
     val rating = validMovieRating(details?.rating ?: movie.rating)
     val duration = readableMovieDuration(details?.duration ?: movie.duration)
     val displayTitle = details?.originalTitle ?: movie.name
+    val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        verticalArrangement = Arrangement.spacedBy(if (landscape) 8.dp else 14.dp)
     ) {
         Surface(
-            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
-            shape = RoundedCornerShape(20.dp),
+            Modifier.fillMaxWidth().then(if (landscape) Modifier.height(170.dp) else Modifier.aspectRatio(16f / 9f)),
+            shape = RoundedCornerShape(if (landscape) 14.dp else 20.dp),
             color = Color.Black,
             shadowElevation = 10.dp
         ) {
@@ -1309,10 +1312,10 @@ private fun MovieDetails(
                     fontSize = 21.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 2,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 132.dp, end = 14.dp, bottom = 16.dp)
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = if (landscape) 108.dp else 132.dp, end = 14.dp, bottom = if (landscape) 10.dp else 16.dp)
                 )
                 Surface(
-                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(104.dp).aspectRatio(2f / 3f),
+                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(if (landscape) 80.dp else 104.dp).aspectRatio(2f / 3f),
                     shape = RoundedCornerShape(13.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shadowElevation = 12.dp,
