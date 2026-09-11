@@ -316,12 +316,27 @@ class PlaylistRepository(context: Context) {
     }
 
     private fun loadProvider(input: PlaylistInput): LoadedPlaylist {
-        var lastError: Exception? = null
-        for (server in addressCandidates(input.address).map(::normalizeServerBase)) {
-            try { return loadProviderFromServer(input, server) }
-            catch (error: Exception) { lastError = error }
+        val server = normalizeServerBase(addressCandidates(input.address).single())
+        try {
+            return loadProviderFromServer(input, server)
+        } catch (error: HttpStatusException) {
+            if (error.status != 401 && error.status != 403 && error.status != 404) throw error
+            // v0.2 accepted server + credentials by downloading this endpoint.
+            // This remains internal; Add Playlist continues to offer Provider Login only.
+            val sourceUrl = "$server/get.php?username=${encode(input.username)}" +
+                "&password=${encode(input.password)}&type=m3u_plus&output=ts"
+            try {
+                return M3uParser.parse(input.name, download(sourceUrl))
+            } catch (legacyError: Exception) {
+                if (legacyError is kotlinx.coroutines.CancellationException) throw legacyError
+                val detail = if (legacyError is HttpStatusException) {
+                    "The original login endpoint returned HTTP ${legacyError.status}."
+                } else "The original login endpoint could not load a playlist."
+                throw IllegalArgumentException(
+                    "Catalog login returned HTTP ${error.status}. $detail", legacyError
+                )
+            }
         }
-        throw lastError ?: IllegalArgumentException("The provider could not be reached.")
     }
 
     private fun loadProviderFromServer(input: PlaylistInput, server: String): LoadedPlaylist {
@@ -447,53 +462,23 @@ class PlaylistRepository(context: Context) {
         return listOf(address)
     }
 
+    private class HttpStatusException(val status: Int) :
+        IllegalArgumentException("The provider returned error $status. Check your details and try again.")
+
     private fun download(url: String): String {
-        val userAgents = listOf("IPTVSmartersPro", "VLC/3.0.20 LibVLC/3.0.20", "Mozilla/5.0 (Android)")
-        var lastCode = -1
-        for (userAgent in userAgents) {
-            var current = URI(url)
-            for (redirectCount in 0 until 6) {
-                val connection = current.toURL().openConnection() as HttpURLConnection
-                connection.connectTimeout = 15_000
-                connection.readTimeout = 30_000
-                connection.instanceFollowRedirects = false
-                connection.requestMethod = "GET"
-                connection.setRequestProperty("User-Agent", userAgent)
-                connection.setRequestProperty("Accept", "*/*")
-                connection.setRequestProperty("Accept-Encoding", "identity")
-                connection.setRequestProperty("Connection", "close")
-                lastCode = connection.responseCode
-                when {
-                    lastCode in 200..299 -> {
-                        try {
-                            return readBody(connection)
-                        } finally {
-                            connection.disconnect()
-                        }
-                    }
-                    lastCode in setOf(301, 302, 303, 307, 308) -> {
-                        val location = connection.getHeaderField("Location")
-                        connection.disconnect()
-                        require(!location.isNullOrBlank()) { "The provider returned an invalid redirect." }
-                        val redirected = current.resolve(location)
-                        require(
-                            redirected.scheme.equals("http", true) ||
-                                redirected.scheme.equals("https", true)
-                        ) { "The provider returned an unsupported redirect." }
-                        current = redirected
-                    }
-                    else -> {
-                        connection.disconnect()
-                        break
-                    }
-                }
-            }
-            if (lastCode != 401 && lastCode != 403) break
+        // Restore the request settings used by the v0.2 login implementation.
+        val connection = URI(url).toURL().openConnection() as HttpURLConnection
+        connection.connectTimeout = 12_000
+        connection.readTimeout = 20_000
+        connection.instanceFollowRedirects = true
+        connection.setRequestProperty("User-Agent", "4K Plus TV Player/0.2")
+        try {
+            val code = connection.responseCode
+            if (code !in 200..299) throw HttpStatusException(code)
+            return readBody(connection)
+        } finally {
+            connection.disconnect()
         }
-        throw IllegalArgumentException(
-            if (lastCode == 401 || lastCode == 403) "The provider denied access. Check the account details or connection limit."
-            else "The provider could not complete the request. Try again shortly."
-        )
     }
 
     private fun readBody(connection: HttpURLConnection): String =
