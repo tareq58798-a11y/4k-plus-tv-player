@@ -629,7 +629,7 @@ private fun ManualPlaylistScreen(
             address, { address = it },
             label = { Text("Server address") },
             supportingText = {
-                Text("The app keeps http:// or https:// exactly as entered. No protocol means http://.")
+                Text("Enter your server address, including the port if one was supplied.")
             },
             trailingIcon = {
                 IconButton(onClick = { address = clipboard.getText()?.text.orEmpty().trim() }) {
