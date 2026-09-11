@@ -21,6 +21,23 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+object ApprovedServers {
+    val addresses = listOf(
+        "http://bag41135.wd.4kplus-tv-za.xyz/",
+        "http://d4kip.com:80"
+    )
+
+    fun allows(input: PlaylistInput): Boolean =
+        input.kind == PlaylistKind.PROVIDER_LOGIN && runCatching {
+            val uri = URI(input.address.trim())
+            uri.scheme.equals("http", true) &&
+                uri.host?.lowercase() in setOf("bag41135.wd.4kplus-tv-za.xyz", "d4kip.com") &&
+                uri.port in setOf(-1, 80) &&
+                uri.path.orEmpty() in setOf("", "/") &&
+                uri.rawQuery == null && uri.rawFragment == null && uri.rawUserInfo == null
+        }.getOrDefault(false)
+}
+
 class PlaylistRepository(context: Context) {
     private val appContext = context.applicationContext
     private val cacheFile = appContext.filesDir.resolve("playlist_cache_v1.bin.gz")
@@ -33,6 +50,7 @@ class PlaylistRepository(context: Context) {
 
     suspend fun load(input: PlaylistInput): Result<LoadedPlaylist> = withContext(Dispatchers.IO) {
         runCatching {
+            require(ApprovedServers.allows(input)) { "Please add an account using Server 1 or Server 2." }
             val playlist = when (input.kind) {
                 PlaylistKind.M3U_URL -> loadM3u(input)
                 PlaylistKind.PROVIDER_LOGIN -> loadProvider(input)
@@ -63,9 +81,9 @@ class PlaylistRepository(context: Context) {
                         )
                     }
                 }
-            }.getOrDefault(emptyList())
+            }.getOrDefault(emptyList()).filter(ApprovedServers::allows)
         }
-        val legacy = legacySavedSource() ?: return emptyList()
+        val legacy = legacySavedSource()?.takeIf(ApprovedServers::allows) ?: return emptyList()
         writeSources(listOf(legacy), sourceId(legacy))
         return listOf(legacy)
     }
@@ -154,7 +172,7 @@ class PlaylistRepository(context: Context) {
 
     suspend fun loadCached(source: PlaylistInput? = savedSource()): LoadedPlaylist? = withContext(Dispatchers.IO) {
         runCatching {
-            val selectedSource = source ?: return@runCatching null
+            val selectedSource = source?.takeIf(ApprovedServers::allows) ?: return@runCatching null
             val specificCache = sourceCacheFile(selectedSource)
             val selectedFile = when {
                 specificCache.exists() -> specificCache
