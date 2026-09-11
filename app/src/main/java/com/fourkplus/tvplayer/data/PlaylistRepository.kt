@@ -357,7 +357,8 @@ class PlaylistRepository(context: Context) {
                 if (fallbackError is kotlinx.coroutines.CancellationException) throw fallbackError
                 throw IllegalArgumentException(
                     "The M3U download was rejected (403), and the provider login fallback also failed. " +
-                        "Try Provider Login to check the connection.",
+                        (if (fallbackError is PlaylistHttpException) fallbackError.message.orEmpty()
+                        else "Try Provider Login to check the connection."),
                     fallbackError
                 )
             }
@@ -496,7 +497,29 @@ class PlaylistRepository(context: Context) {
         return listOf(address)
     }
 
+    private fun requestStage(url: String): String {
+        val uri = URI(url)
+        if (!uri.path.orEmpty().endsWith("/player_api.php")) return "M3U download"
+        val action = uri.rawQuery.orEmpty().split('&')
+            .firstOrNull { it.startsWith("action=") }?.substringAfter('=')
+        return when (action) {
+            null -> "Provider authentication"
+            "get_live_categories" -> "Live categories"
+            "get_vod_categories" -> "Movie categories"
+            "get_series_categories" -> "Series categories"
+            "get_live_streams" -> "Live catalog"
+            "get_vod_streams" -> "Movie catalog"
+            "get_series" -> "Series catalog"
+            "get_vod_info" -> "Movie details"
+            "get_series_info" -> "Series details"
+            else -> "Provider request"
+        }
+    }
+
     private fun download(url: String): String {
+        val stage = requestStage(url)
+        var responseInfo = ""
+        val attempts = mutableListOf<String>()
         val userAgents = listOf("IPTVSmartersPro", "VLC/3.0.20 LibVLC/3.0.20", "Mozilla/5.0 (Android)")
         var lastCode = -1
         var lastRoute = ""
@@ -529,6 +552,15 @@ class PlaylistRepository(context: Context) {
                             "Secure connection failed ($lastRoute). The entered address was not changed.", error
                         )
                     }
+                    // Only fixed labels are shown: never expose URLs, cookies, or response bodies.
+                    val cloudflare = connection.getHeaderField("Server").equals("cloudflare", true)
+                    val challenge = connection.getHeaderField("cf-mitigated").equals("challenge", true)
+                    val html = connection.contentType.orEmpty().startsWith("text/html", true)
+                    responseInfo = listOfNotNull(
+                        if (cloudflare) "Cloudflare response" else null,
+                        if (challenge) "browser verification required" else null,
+                        if (html) "HTML response" else null
+                    ).joinToString("; ")
                     cookies.put(current, connection.headerFields)
                     when {
                         lastCode in 200..299 -> return readBody(connection)
@@ -553,12 +585,12 @@ class PlaylistRepository(context: Context) {
                     connection.disconnect()
                 }
             }
+            attempts.add("HTTP $lastCode; $lastRoute" + if (responseInfo.isEmpty()) "" else "; $responseInfo")
             if (lastCode != 401 && lastCode != 403) break
         }
         throw PlaylistHttpException(lastCode,
-            if (lastCode == 401 || lastCode == 403)
-                "The playlist server rejected this request (HTTP $lastCode; $lastRoute). The entered address was not changed."
-            else "The playlist request failed (HTTP $lastCode; $lastRoute). Try again shortly."
+            "$stage failed. " + attempts.distinct().joinToString(" | ") +
+                ". The entered address was not changed."
         )
     }
 
