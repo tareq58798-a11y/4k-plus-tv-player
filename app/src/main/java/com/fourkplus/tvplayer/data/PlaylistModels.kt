@@ -8,7 +8,9 @@ data class PlaylistInput(
     val address: String,
     val username: String = "",
     val password: String = ""
-)
+) {
+    override fun toString() = "PlaylistInput(credentials=REDACTED)"
+}
 
 /** Stable identity for a source across saved-source storage and on-disk cache naming. Deliberately excludes the password. */
 internal fun PlaylistInput.sourceId(): String = "${kind.name}|${address.trim()}|${username.trim()}"
@@ -26,7 +28,9 @@ data class PlaylistItem(
     val year: String? = null,
     val rating: String? = null,
     val duration: String? = null
-)
+) {
+    override fun toString() = "PlaylistItem(credentials=REDACTED)"
+}
 
 data class LoadedPlaylist(
     val name: String,
