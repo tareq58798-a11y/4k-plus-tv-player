@@ -101,10 +101,7 @@ class PlaylistRepository(context: Context) {
             writeSources(remaining, sourceId(remaining.first()))
             writeActiveSource(remaining.first())
         }
-        active?.let {
-            sourceCacheFile(it).delete()
-            preferences.edit().remove(fallbackKey(it)).apply()
-        }
+        active?.let { sourceCacheFile(it).delete() }
         if (cacheFile.exists()) cacheFile.delete()
     }
 
@@ -201,7 +198,7 @@ class PlaylistRepository(context: Context) {
 
     suspend fun movieDetails(movie: PlaylistItem): Result<MovieDetailsInfo> = withContext(Dispatchers.IO) {
         runCatching {
-            val source = sourceForDetails() ?: throw IllegalArgumentException("No saved provider is available.")
+            val source = savedSource() ?: throw IllegalArgumentException("No saved provider is available.")
             val movieId = movie.channelId
             require(source.kind == PlaylistKind.PROVIDER_LOGIN && !movieId.isNullOrBlank()) {
                 "Detailed information is not available for this playlist."
@@ -244,7 +241,7 @@ class PlaylistRepository(context: Context) {
 
     suspend fun seriesDetails(series: PlaylistItem): Result<SeriesDetailsInfo> = withContext(Dispatchers.IO) {
         runCatching {
-            val source = sourceForDetails() ?: throw IllegalArgumentException("No saved provider is available.")
+            val source = savedSource() ?: throw IllegalArgumentException("No saved provider is available.")
             val seriesId = series.channelId
             require(source.kind == PlaylistKind.PROVIDER_LOGIN && !seriesId.isNullOrBlank()) {
                 "Series information is not available for this playlist."
@@ -309,60 +306,13 @@ class PlaylistRepository(context: Context) {
         }.recoverCatching { throw friendlyError(it) }
     }
 
-    private class PlaylistHttpException(val status: Int, message: String) : IllegalArgumentException(message)
-
-    private fun fallbackKey(input: PlaylistInput): String = "provider_fallback_" + sourceCacheFile(input).name
-
-    private fun providerFromM3u(input: PlaylistInput): PlaylistInput? = runCatching {
-        if (input.kind != PlaylistKind.M3U_URL) return@runCatching null
-        val uri = URI(addressCandidates(input.address).single())
-        if (!uri.path.orEmpty().endsWith("/get.php")) return@runCatching null
-        val parameters = uri.rawQuery.orEmpty().split('&').map { parameter ->
-            val key = java.net.URLDecoder.decode(parameter.substringBefore('='), "UTF-8")
-            val value = java.net.URLDecoder.decode(parameter.substringAfter('=', ""), "UTF-8")
-            key to value
-        }
-        fun singleValue(key: String): String? =
-            parameters.filter { it.first == key }.singleOrNull()?.second?.takeIf { it.isNotBlank() }
-        val username = singleValue("username") ?: return@runCatching null
-        val password = singleValue("password") ?: return@runCatching null
-        if (uri.rawUserInfo != null || uri.fragment != null) return@runCatching null
-        val base = "${uri.scheme}://${uri.rawAuthority}" + uri.rawPath.removeSuffix("/get.php")
-        input.copy(kind = PlaylistKind.PROVIDER_LOGIN, address = base, username = username, password = password)
-    }.getOrNull()
-
-    private fun sourceForDetails(): PlaylistInput? {
-        val source = savedSource() ?: return null
-        return if (source.kind == PlaylistKind.M3U_URL && preferences.getBoolean(fallbackKey(source), false)) {
-            providerFromM3u(source)
-        } else source
-    }
-
     private fun loadM3u(input: PlaylistInput): LoadedPlaylist {
-        val address = addressCandidates(input.address).single()
-        try {
-            val playlist = M3uParser.parse(input.name, download(address))
-            preferences.edit().remove(fallbackKey(input)).apply()
-            return playlist
-        } catch (error: PlaylistHttpException) {
-            if (error.status != 403) throw error
-            val provider = providerFromM3u(input) ?: throw error
-            try {
-                val playlist = loadProvider(provider)
-                // Keep the original M3U identity and URL for switching and caching.
-                // Remember how the catalog was loaded so details use provider stream IDs.
-                preferences.edit().putBoolean(fallbackKey(input), true).apply()
-                return playlist
-            } catch (fallbackError: Exception) {
-                if (fallbackError is kotlinx.coroutines.CancellationException) throw fallbackError
-                throw IllegalArgumentException(
-                    "The M3U download was rejected (403), and the provider login fallback also failed. " +
-                        (if (fallbackError is PlaylistHttpException) fallbackError.message.orEmpty()
-                        else "Try Provider Login to check the connection."),
-                    fallbackError
-                )
-            }
+        var lastError: Exception? = null
+        for (address in addressCandidates(input.address)) {
+            try { return M3uParser.parse(input.name, download(address)) }
+            catch (error: Exception) { lastError = error }
         }
+        throw lastError ?: IllegalArgumentException("The playlist address could not be reached.")
     }
 
     private fun loadProvider(input: PlaylistInput): LoadedPlaylist {
@@ -497,100 +447,52 @@ class PlaylistRepository(context: Context) {
         return listOf(address)
     }
 
-    private fun requestStage(url: String): String {
-        val uri = URI(url)
-        if (!uri.path.orEmpty().endsWith("/player_api.php")) return "M3U download"
-        val action = uri.rawQuery.orEmpty().split('&')
-            .firstOrNull { it.startsWith("action=") }?.substringAfter('=')
-        return when (action) {
-            null -> "Provider authentication"
-            "get_live_categories" -> "Live categories"
-            "get_vod_categories" -> "Movie categories"
-            "get_series_categories" -> "Series categories"
-            "get_live_streams" -> "Live catalog"
-            "get_vod_streams" -> "Movie catalog"
-            "get_series" -> "Series catalog"
-            "get_vod_info" -> "Movie details"
-            "get_series_info" -> "Series details"
-            else -> "Provider request"
-        }
-    }
-
     private fun download(url: String): String {
-        val stage = requestStage(url)
-        var responseInfo = ""
-        val attempts = mutableListOf<String>()
         val userAgents = listOf("IPTVSmartersPro", "VLC/3.0.20 LibVLC/3.0.20", "Mozilla/5.0 (Android)")
         var lastCode = -1
-        var lastRoute = ""
         for (userAgent in userAgents) {
-            // Keep cookies within this download attempt, never across playlists.
-            val cookies = java.net.CookieManager(null, java.net.CookiePolicy.ACCEPT_ORIGINAL_SERVER)
             var current = URI(url)
-            val protocols = mutableListOf(current.scheme.uppercase())
-            val visited = mutableSetOf<URI>()
             for (redirectCount in 0 until 6) {
-                require(visited.add(current)) { "The playlist server returned a redirect loop." }
                 val connection = current.toURL().openConnection() as HttpURLConnection
-                try {
-                    connection.connectTimeout = 15_000
-                    connection.readTimeout = 30_000
-                    connection.instanceFollowRedirects = false
-                    connection.requestMethod = "GET"
-                    connection.setRequestProperty("User-Agent", userAgent)
-                    connection.setRequestProperty("Accept", "*/*")
-                    connection.setRequestProperty("Accept-Encoding", "identity")
-                    connection.setRequestProperty("Connection", "close")
-                    cookies.get(current, emptyMap()).forEach { (name, values) ->
-                        values.forEach { value -> connection.addRequestProperty(name, value) }
-                    }
-                    lastRoute = protocols.joinToString(" → ")
-                    try {
-                        lastCode = connection.responseCode
-                    } catch (error: javax.net.ssl.SSLException) {
-                        throw IllegalArgumentException(
-                            "Secure connection failed ($lastRoute). The entered address was not changed.", error
-                        )
-                    }
-                    // Only fixed labels are shown: never expose URLs, cookies, or response bodies.
-                    val cloudflare = connection.getHeaderField("Server").equals("cloudflare", true)
-                    val challenge = connection.getHeaderField("cf-mitigated").equals("challenge", true)
-                    val html = connection.contentType.orEmpty().startsWith("text/html", true)
-                    responseInfo = listOfNotNull(
-                        if (cloudflare) "Cloudflare response" else null,
-                        if (challenge) "browser verification required" else null,
-                        if (html) "HTML response" else null
-                    ).joinToString("; ")
-                    cookies.put(current, connection.headerFields)
-                    when {
-                        lastCode in 200..299 -> return readBody(connection)
-                        lastCode in setOf(301, 302, 303, 307, 308) -> {
-                            val location = connection.getHeaderField("Location")
-                            require(!location.isNullOrBlank()) { "The provider returned an invalid redirect." }
-                            val redirected = current.resolve(location)
-                            require(
-                                redirected.scheme.equals("http", true) ||
-                                    redirected.scheme.equals("https", true)
-                            ) { "The provider returned an unsupported redirect." }
-                            require(redirectCount < 5) { "The playlist server returned too many redirects." }
-                            // Use the server's destination only for this request. Do not rewrite the saved URL.
-                            if (!redirected.scheme.equals(current.scheme, true)) {
-                                protocols.add(redirected.scheme.uppercase())
-                            }
-                            current = redirected
+                connection.connectTimeout = 15_000
+                connection.readTimeout = 30_000
+                connection.instanceFollowRedirects = false
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("User-Agent", userAgent)
+                connection.setRequestProperty("Accept", "*/*")
+                connection.setRequestProperty("Accept-Encoding", "identity")
+                connection.setRequestProperty("Connection", "close")
+                lastCode = connection.responseCode
+                when {
+                    lastCode in 200..299 -> {
+                        try {
+                            return readBody(connection)
+                        } finally {
+                            connection.disconnect()
                         }
-                        else -> break
                     }
-                } finally {
-                    connection.disconnect()
+                    lastCode in setOf(301, 302, 303, 307, 308) -> {
+                        val location = connection.getHeaderField("Location")
+                        connection.disconnect()
+                        require(!location.isNullOrBlank()) { "The provider returned an invalid redirect." }
+                        val redirected = current.resolve(location)
+                        require(
+                            redirected.scheme.equals("http", true) ||
+                                redirected.scheme.equals("https", true)
+                        ) { "The provider returned an unsupported redirect." }
+                        current = redirected
+                    }
+                    else -> {
+                        connection.disconnect()
+                        break
+                    }
                 }
             }
-            attempts.add("HTTP $lastCode; $lastRoute" + if (responseInfo.isEmpty()) "" else "; $responseInfo")
             if (lastCode != 401 && lastCode != 403) break
         }
-        throw PlaylistHttpException(lastCode,
-            "$stage failed. " + attempts.distinct().joinToString(" | ") +
-                ". The entered address was not changed."
+        throw IllegalArgumentException(
+            if (lastCode == 401 || lastCode == 403) "The provider denied access. Check the account details or connection limit."
+            else "The provider could not complete the request. Try again shortly."
         )
     }
 
@@ -609,7 +511,7 @@ class PlaylistRepository(context: Context) {
 
     private fun friendlyError(error: Throwable): Throwable = when {
         error is SocketException -> IllegalArgumentException("The server closed the connection. Verify the server address and try again.", error)
-        error is javax.net.ssl.SSLException -> IllegalArgumentException("A secure connection to the playlist server could not be established.", error)
+        error.message?.contains("TLS", true) == true -> IllegalArgumentException("This server uses HTTP rather than HTTPS. Please use its HTTP address.", error)
         error is org.json.JSONException -> IllegalArgumentException("This server returned an unsupported response. Confirm that it supports provider login.", error)
         else -> error
     }
