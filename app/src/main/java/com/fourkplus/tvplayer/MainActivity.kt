@@ -1771,7 +1771,7 @@ internal fun MoviePlayer(
     }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
-            override fun onPlayerError(playbackException: PlaybackException) { error = "This movie could not be played." }
+            override fun onPlayerError(playbackException: PlaybackException) { error = playbackFailureMessage(playbackException) }
         }
         player.addListener(listener)
         onDispose {
@@ -2672,7 +2672,7 @@ private fun LiveChannelPreview(
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
-                playbackError = "This stream is unavailable. Choose another channel."
+                playbackError = playbackFailureMessage(error)
             }
         }
         player.addListener(listener)
@@ -3025,4 +3025,17 @@ private fun pressFeedback(onClick: () -> Unit): Modifier {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             onClick()
         }
+}
+
+/** Only expose structured codes; exception messages may contain account URLs. */
+private fun playbackFailureMessage(error: PlaybackException): String {
+    var cause: Throwable? = error
+    repeat(12) {
+        val current = cause ?: return@repeat
+        if (current is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+            return "Playback failed: HTTP ${current.responseCode} (code ${error.errorCode})."
+        }
+        cause = current.cause
+    }
+    return "Playback failed: ${error.errorCodeName} (code ${error.errorCode})."
 }
