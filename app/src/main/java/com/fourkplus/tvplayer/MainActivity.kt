@@ -604,16 +604,13 @@ private fun ManualPlaylistScreen(
     loadPlaylist: suspend (PlaylistInput) -> Result<LoadedPlaylist>,
     onConnected: (LoadedPlaylist) -> Unit
 ) {
-    var useM3u by remember { mutableStateOf(false) }
-    var m3uAddress by remember { mutableStateOf("") }
+    var serverIndex by remember { mutableStateOf(0) }
     var name by remember { mutableStateOf("") }
-    var address by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    val clipboard = LocalClipboardManager.current
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val landscape = maxWidth > maxHeight
         Column(
@@ -625,41 +622,19 @@ private fun ManualPlaylistScreen(
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
             Text("Add Playlist", fontSize = 26.sp, fontWeight = FontWeight.Bold)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FilterChip(
-                selected = !useM3u,
-                onClick = { useM3u = false; error = null },
-                enabled = !loading,
-                label = { Text("Provider Login") }
-            )
-            FilterChip(
-                selected = useM3u,
-                onClick = { useM3u = true; error = null },
-                enabled = !loading,
-                label = { Text("M3U URL") }
-            )
+        Text("Choose your server", style = MaterialTheme.typography.titleMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            com.fourkplus.tvplayer.data.ApprovedServers.addresses.forEachIndexed { index, _ ->
+                FilterChip(
+                    selected = serverIndex == index,
+                    onClick = { serverIndex = index; error = null },
+                    enabled = !loading,
+                    label = { Text("Server ${index + 1}") }
+                )
+            }
         }
-        OutlinedTextField(name, { name = it }, label = { Text("Playlist name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(
-            if (useM3u) m3uAddress else address,
-            { if (useM3u) m3uAddress = it else address = it },
-            enabled = !loading,
-            label = { Text(if (useM3u) "M3U playlist URL" else "Server address") },
-            supportingText = {
-                Text(if (useM3u) "Paste the complete playlist link supplied with your account." else "Enter your server address, including the port if one was supplied.")
-            },
-            trailingIcon = {
-                IconButton(enabled = !loading, onClick = {
-                    val pasted = clipboard.getText()?.text.orEmpty().trim()
-                    if (useM3u) m3uAddress = pasted else address = pasted
-                }) {
-                    Icon(Icons.Default.ContentPaste, "Paste")
-                }
-            },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth()
-        )
-        if (!useM3u) {
+        OutlinedTextField(name, { name = it }, enabled = !loading, label = { Text("Playlist name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        run {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 OutlinedTextField(username, { username = it }, label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(
@@ -695,10 +670,10 @@ private fun ManualPlaylistScreen(
                 error = null
                 val input = PlaylistInput(
                     name = name,
-                    kind = if (useM3u) PlaylistKind.M3U_URL else PlaylistKind.PROVIDER_LOGIN,
-                    address = if (useM3u) m3uAddress.trim() else address,
-                    username = if (useM3u) "" else username,
-                    password = if (useM3u) "" else password
+                    kind = PlaylistKind.PROVIDER_LOGIN,
+                    address = com.fourkplus.tvplayer.data.ApprovedServers.addresses[serverIndex],
+                    username = username,
+                    password = password
                 )
                 scope.launch {
                     loadPlaylist(input)
@@ -708,7 +683,7 @@ private fun ManualPlaylistScreen(
                 }
             },
             enabled = !loading && name.isNotBlank() &&
-                (if (useM3u) m3uAddress.isNotBlank() else address.isNotBlank() && username.isNotBlank() && password.isNotBlank()),
+                username.isNotBlank() && password.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(52.dp)
         ) {
             if (loading) CircularProgressIndicator(Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
