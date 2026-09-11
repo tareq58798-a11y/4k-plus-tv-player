@@ -1,5 +1,7 @@
 package com.fourkplus.tvplayer.data
 
+import com.fourkplus.tvplayer.iptv.PlaybackSpec
+
 enum class PlaylistKind { M3U_URL, PROVIDER_LOGIN }
 
 data class PlaylistInput(
@@ -8,7 +10,9 @@ data class PlaylistInput(
     val address: String,
     val username: String = "",
     val password: String = ""
-)
+) {
+    override fun toString() = "PlaylistInput(credentials=REDACTED)"
+}
 
 enum class MediaKind { LIVE, MOVIE, SERIES }
 
@@ -22,8 +26,15 @@ data class PlaylistItem(
     val description: String? = null,
     val year: String? = null,
     val rating: String? = null,
-    val duration: String? = null
-)
+    val duration: String? = null,
+    val categoryId: String? = null,
+    val epgChannelId: String? = null,
+    val streamType: String? = null,
+    val containerExtension: String? = null,
+    val playback: PlaybackSpec? = null
+) {
+    override fun toString() = "PlaylistItem(credentials=REDACTED)"
+}
 
 data class LoadedPlaylist(
     val name: String,

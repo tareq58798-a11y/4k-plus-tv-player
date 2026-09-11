@@ -69,14 +69,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import androidx.media3.common.MediaItem
 import androidx.media3.common.C
-import androidx.media3.common.MimeTypes
-import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
-import androidx.media3.datasource.DefaultHttpDataSource
-import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.PlayerView
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.core.view.WindowCompat
@@ -89,9 +83,14 @@ import com.fourkplus.tvplayer.data.MovieDetailsInfo
 import com.fourkplus.tvplayer.data.PlaylistItem
 import com.fourkplus.tvplayer.data.PlaylistInput
 import com.fourkplus.tvplayer.data.PlaylistKind
-import com.fourkplus.tvplayer.data.PlaylistRepository
+import com.fourkplus.tvplayer.iptv.IptvRepository
+import com.fourkplus.tvplayer.iptv.PlayerManager
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
 import coil.compose.AsyncImage
 
 class MainActivity : ComponentActivity() {
@@ -149,11 +148,18 @@ private fun App() {
         }
     }
     val appPreferences = remember { context.getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE) }
-    val playlistRepository = remember { PlaylistRepository(context.applicationContext) }
+    val playlistRepository = remember { IptvRepository(context.applicationContext) }
     var loadedPlaylist by remember { mutableStateOf<LoadedPlaylist?>(null) }
     var savedPlaylists by remember { mutableStateOf(playlistRepository.savedSources()) }
     val playlistMemoryCache = remember { mutableStateMapOf<String, LoadedPlaylist>() }
+    var playlistSwitchJob by remember { mutableStateOf<Job?>(null) }
     val message: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
+    LaunchedEffect(screen) {
+        if (screen != Screen.PLAYLISTS) {
+            playlistSwitchJob?.cancel()
+            playlistSwitchJob = null
+        }
+    }
 
     LaunchedEffect(Unit) {
         themeChoice = runCatching {
@@ -218,7 +224,7 @@ private fun App() {
                 )
                 Screen.MANUAL -> ManualPlaylistScreen(
                     onBack = { screen = if (savedPlaylists.isEmpty()) Screen.ACTIVATION else Screen.PLAYLISTS },
-                    loadPlaylist = playlistRepository::load,
+                    loadPlaylist = playlistRepository::connect,
                     onConnected = {
                         loadedPlaylist = it
                         savedPlaylists = playlistRepository.savedSources()
@@ -235,7 +241,8 @@ private fun App() {
                     onBack = { screen = Screen.HOME },
                     onAdd = { screen = Screen.MANUAL },
                     onSelect = { source ->
-                        scope.launch {
+                        playlistSwitchJob?.cancel()
+                        playlistSwitchJob = scope.launch {
                             val previousSource = playlistRepository.savedSource()
                             if (previousSource != null && loadedPlaylist != null) {
                                 playlistMemoryCache[playlistMemoryKey(previousSource)] = loadedPlaylist!!
@@ -253,26 +260,26 @@ private fun App() {
                                 }
                             } else {
                                 message("Preparing ${source.name} for its first switch…")
-                                playlistRepository.load(source)
+                                playlistRepository.loadWithoutSelecting(source)
                                     .onSuccess {
                                         playlistMemoryCache[key] = it
                                         if (screen == Screen.PLAYLISTS) {
+                                            playlistRepository.selectSavedSource(source)
                                             loadedPlaylist = it
                                             savedPlaylists = playlistRepository.savedSources()
                                             screen = Screen.HOME
                                             message("${source.name} selected")
-                                        } else {
-                                            previousSource?.let(playlistRepository::selectSavedSource)
                                         }
                                     }
                                     .onFailure {
-                                        previousSource?.let(playlistRepository::selectSavedSource)
                                         message(it.message ?: "Playlist could not be loaded")
                                     }
                             }
                         }
                     },
                     onRemove = { source ->
+                        playlistSwitchJob?.cancel()
+                        playlistMemoryCache.remove(playlistMemoryKey(source))
                         scope.launch {
                             playlistRepository.selectSavedSource(source)
                             playlistRepository.clearSavedSource()
@@ -301,8 +308,14 @@ private fun App() {
                     onManage = { screen = Screen.SETTINGS },
                     onPlaylists = { screen = Screen.PLAYLISTS },
                     onOpenLive = { screen = Screen.LIVE_TV },
-                    onOpenMovies = { screen = Screen.MOVIES },
-                    onOpenSeries = { screen = Screen.SERIES },
+                    onOpenMovies = {
+                        screen = Screen.MOVIES
+                        message("This Live TV validation build defers VOD until live playback is verified.")
+                    },
+                    onOpenSeries = {
+                        screen = Screen.SERIES
+                        message("Series is deferred in this Live TV validation build.")
+                    },
                     onMessage = message
                 )
                 Screen.LIVE_TV -> LiveTvScreen(
@@ -624,7 +637,7 @@ private fun ManualPlaylistScreen(
         }
         Text("Choose your server", style = MaterialTheme.typography.titleMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            com.fourkplus.tvplayer.data.ApprovedServers.addresses.forEachIndexed { index, _ ->
+            com.fourkplus.tvplayer.iptv.ApprovedServers.addresses.forEachIndexed { index, _ ->
                 FilterChip(
                     selected = serverIndex == index,
                     onClick = { serverIndex = index; error = null },
@@ -671,7 +684,7 @@ private fun ManualPlaylistScreen(
                 val input = PlaylistInput(
                     name = name,
                     kind = PlaylistKind.PROVIDER_LOGIN,
-                    address = com.fourkplus.tvplayer.data.ApprovedServers.addresses[serverIndex],
+                    address = com.fourkplus.tvplayer.iptv.ApprovedServers.addresses[serverIndex],
                     username = username,
                     password = password
                 )
@@ -1741,22 +1754,11 @@ internal fun MoviePlayer(
             seekFeedback = null
         }
     }
-    val player = remember(movie.streamUrl, skipSeconds) {
-        val factory = DefaultHttpDataSource.Factory().setUserAgent("VLC/3.0.20 LibVLC/3.0.20").setAllowCrossProtocolRedirects(true)
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(factory))
-            .setSeekBackIncrementMs(skipSeconds * 1_000L)
-            .setSeekForwardIncrementMs(skipSeconds * 1_000L)
-            .build()
-            .apply { volume = if (settings.getBoolean("muted", false)) 0f else 1f }
-    }
-    LaunchedEffect(player, movie.streamUrl, externalSubtitle) {
-        error = null
-        val resumeAt = player.currentPosition.takeIf { it > 0L } ?: startPosition
-        player.setMediaItem(mediaItemWithSubtitle(context, movie.streamUrl, externalSubtitle))
-        if (resumeAt > 0L) player.seekTo(resumeAt)
-        player.prepare()
-        player.playWhenReady = true
+    val manager = remember(skipSeconds) { PlayerManager(context, skipSeconds) { error = it } }
+    val player = manager.player
+    LaunchedEffect(manager, movie.playback, externalSubtitle) {
+        player.volume = if (settings.getBoolean("muted", false)) 0f else 1f
+        manager.open(movie, externalSubtitle, startPosition)
         while (true) {
             delay(2_000)
             if (player.currentPosition > 0L) onProgress(player.currentPosition, player.duration)
@@ -1769,15 +1771,10 @@ internal fun MoviePlayer(
             .setSelectUndeterminedTextLanguage(subtitlesEnabled)
             .build()
     }
-    DisposableEffect(player) {
-        val listener = object : Player.Listener {
-            override fun onPlayerError(playbackException: PlaybackException) { error = playbackFailureMessage(playbackException) }
-        }
-        player.addListener(listener)
+    DisposableEffect(manager) {
         onDispose {
             if (player.currentPosition > 0L) onProgress(player.currentPosition, player.duration)
-            player.removeListener(listener)
-            player.release()
+            manager.close()
         }
     }
     val playerContent: @Composable (Modifier, Shape) -> Unit = { contentModifier, shape ->
@@ -2543,18 +2540,6 @@ private fun openExternalPlayerStore(context: android.content.Context, preference
     }
 }
 
-private fun mediaItemWithSubtitle(context: android.content.Context, streamUrl: String, subtitle: Uri?): MediaItem {
-    val builder = MediaItem.Builder().setUri(streamUrl)
-    if (subtitle != null) {
-        val detected = context.contentResolver.getType(subtitle).orEmpty()
-        val mime = if (detected.contains("vtt", true)) MimeTypes.TEXT_VTT else MimeTypes.APPLICATION_SUBRIP
-        builder.setSubtitleConfigurations(
-            listOf(MediaItem.SubtitleConfiguration.Builder(subtitle).setMimeType(mime).setSelectionFlags(C.SELECTION_FLAG_DEFAULT).build())
-        )
-    }
-    return builder.build()
-}
-
 @Composable
 private fun LiveChannelPreview(
     channel: PlaylistItem?,
@@ -2632,34 +2617,19 @@ private fun LiveChannelPreview(
             seekFeedback = null
         }
     }
-    val player = remember(skipSeconds) {
-        val dataSourceFactory = DefaultHttpDataSource.Factory()
-            .setUserAgent("VLC/3.0.20 LibVLC/3.0.20")
-            .setAllowCrossProtocolRedirects(true)
-        ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(context).setDataSourceFactory(dataSourceFactory))
-            .setSeekBackIncrementMs(skipSeconds * 1_000L)
-            .setSeekForwardIncrementMs(skipSeconds * 1_000L)
-            .build()
-            .apply {
-                playWhenReady = true
-                volume = if (settings.getBoolean("muted", false)) 0f else 1f
-            }
-    }
-
-    LaunchedEffect(channel?.streamUrl, externalSubtitle) {
-        playbackError = null
-        if (channel == null) {
-            player.clearMediaItems()
-        } else {
-            runCatching {
-                player.setMediaItem(mediaItemWithSubtitle(context, channel.streamUrl, externalSubtitle))
-                player.prepare()
-                player.play()
-            }.onFailure {
-                playbackError = "This channel could not be previewed."
-                player.clearMediaItems()
-            }
+    val manager = remember(skipSeconds) { PlayerManager(context, skipSeconds) { playbackError = it } }
+    val player = manager.player
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(manager, lifecycleOwner, channel, externalSubtitle) {
+        player.volume = if (settings.getBoolean("muted", false)) 0f else 1f
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) manager.stop()
+            if (event == Lifecycle.Event.ON_START) manager.open(channel, externalSubtitle)
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            manager.stop()
         }
     }
     LaunchedEffect(player, subtitlesEnabled) {
@@ -2669,18 +2639,7 @@ private fun LiveChannelPreview(
             .setSelectUndeterminedTextLanguage(subtitlesEnabled)
             .build()
     }
-    DisposableEffect(player) {
-        val listener = object : Player.Listener {
-            override fun onPlayerError(error: PlaybackException) {
-                playbackError = playbackFailureMessage(error)
-            }
-        }
-        player.addListener(listener)
-        onDispose {
-            player.removeListener(listener)
-            player.release()
-        }
-    }
+    DisposableEffect(manager) { onDispose { manager.close() } }
 
     val fullscreenDoubleTapExit: (() -> Unit)? = if ((fullscreen || hostedFullscreen) && onFullscreenDoubleTap != null) {
         { fullscreen = false; onFullscreenDoubleTap() }
@@ -3025,17 +2984,4 @@ private fun pressFeedback(onClick: () -> Unit): Modifier {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             onClick()
         }
-}
-
-/** Only expose structured codes; exception messages may contain account URLs. */
-private fun playbackFailureMessage(error: PlaybackException): String {
-    var cause: Throwable? = error
-    repeat(12) {
-        val current = cause ?: return@repeat
-        if (current is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
-            return "Playback failed: HTTP ${current.responseCode} (code ${error.errorCode})."
-        }
-        cause = current.cause
-    }
-    return "Playback failed: ${error.errorCodeName} (code ${error.errorCode})."
 }
