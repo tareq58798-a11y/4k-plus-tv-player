@@ -3,11 +3,12 @@ package com.fourkplus.tvplayer.data
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
-import java.io.BufferedReader
 import java.io.DataInputStream
 import java.io.DataOutputStream
-import java.io.InputStreamReader
-import java.net.HttpURLConnection
+import java.io.IOException
+import java.util.concurrent.TimeUnit
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.net.SocketException
 import java.net.URI
 import java.net.URLEncoder
@@ -450,42 +451,35 @@ class PlaylistRepository(context: Context) {
     }
 
     private fun download(url: String): String {
-        val userAgents = listOf("IPTVSmartersPro", "VLC/3.0.20 LibVLC/3.0.20", "Mozilla/5.0 (Android)")
-        var lastCode = -1
-        for (userAgent in userAgents) {
-            val connection = URI(url).toURL().openConnection() as HttpURLConnection
-            connection.connectTimeout = 15_000
-            connection.readTimeout = 30_000
-            connection.instanceFollowRedirects = true
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("User-Agent", userAgent)
-            connection.setRequestProperty("Accept", "*/*")
-            connection.setRequestProperty("Accept-Encoding", "identity")
-            connection.setRequestProperty("Connection", "close")
-            try {
-                lastCode = connection.responseCode
-                if (lastCode in 200..299) return readBody(connection)
-                if (lastCode != 401 && lastCode != 403) break
-            } finally { connection.disconnect() }
-        }
-        throw IllegalArgumentException(
-            if (lastCode == 401 || lastCode == 403) "The provider denied access. Check the account details or connection limit."
-            else "The provider could not complete the request. Try again shortly."
-        )
-    }
-
-    private fun readBody(connection: HttpURLConnection): String =
-        BufferedReader(InputStreamReader(connection.inputStream)).use { reader ->
-            buildString {
-                var total = 0
-                while (true) {
-                    val line = reader.readLine() ?: break
-                    total += line.length
-                    require(total <= 80_000_000) { "The provider response is too large to load safely." }
-                    appendLine(line)
+        // Let OkHttp supply its standard headers, gzip decoding and redirects.
+        // Never log request URLs: the query contains account credentials.
+        val request = Request.Builder().url(url).get().build()
+        try {
+            return httpClient.newCall(request).execute().use { response ->
+                require(response.isSuccessful) {
+                    "The server returned HTTP ${response.code}. Please try again."
+                }
+                val body = response.body
+                    ?: throw IllegalArgumentException("The server returned an empty response.")
+                body.charStream().use { reader ->
+                    buildString {
+                        val buffer = CharArray(8192)
+                        while (true) {
+                            val count = reader.read(buffer)
+                            if (count == -1) break
+                            require(length.toLong() + count <= 80_000_000L) {
+                                "The provider response is too large to load safely."
+                            }
+                            append(buffer, 0, count)
+                        }
+                    }
                 }
             }
+        } catch (error: IOException) {
+            // Transport exception messages can contain the credential-bearing URL.
+            throw IllegalArgumentException("Could not connect to the server. Check the address and your connection.")
         }
+    }
 
     private fun friendlyError(error: Throwable): Throwable = when {
         error is SocketException -> IllegalArgumentException("The server closed the connection. Verify the server address and try again.", error)
@@ -557,5 +551,12 @@ class PlaylistRepository(context: Context) {
 
     private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
 
-    private companion object { const val CACHE_VERSION = 4 }
+    private companion object {
+        const val CACHE_VERSION = 4
+        val httpClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(60, TimeUnit.SECONDS)
+            .build()
+    }
 }
