@@ -592,7 +592,7 @@ private fun ManualEntryCard(modifier: Modifier, onManual: () -> Unit) {
         Column(Modifier.padding(22.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             AccentIcon(Icons.Default.PlaylistAdd, Orange)
             Text("Add Playlist Manually", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Text("Use an M3U URL or your authorized provider login.")
+            Text("Connect using your provider’s server address, username, and password.")
             Button(onClick = onManual, modifier = Modifier.fillMaxWidth()) { Text("Add Playlist") }
         }
     }
@@ -604,7 +604,6 @@ private fun ManualPlaylistScreen(
     loadPlaylist: suspend (PlaylistInput) -> Result<LoadedPlaylist>,
     onConnected: (LoadedPlaylist) -> Unit
 ) {
-    var tab by remember { mutableIntStateOf(0) }
     var name by remember { mutableStateOf("") }
     var address by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
@@ -624,14 +623,11 @@ private fun ManualPlaylistScreen(
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
             Text("Add Playlist", fontSize = 26.sp, fontWeight = FontWeight.Bold)
         }
-        TabRow(tab) {
-            Tab(tab == 0, { tab = 0 }, text = { Text("M3U URL") })
-            Tab(tab == 1, { tab = 1 }, text = { Text("Provider Login") })
-        }
+        Text("Provider Login", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(name, { name = it }, label = { Text("Playlist name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(
             address, { address = it },
-            label = { Text(if (tab == 0) "M3U/M3U8 URL" else "Server address") },
+            label = { Text("Server address") },
             supportingText = {
                 Text("The app keeps http:// or https:// exactly as entered. No protocol means http://.")
             },
@@ -643,7 +639,7 @@ private fun ManualPlaylistScreen(
             singleLine = true,
             modifier = Modifier.fillMaxWidth()
         )
-        AnimatedVisibility(tab == 1) {
+        run {
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 OutlinedTextField(username, { username = it }, label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(
@@ -679,7 +675,7 @@ private fun ManualPlaylistScreen(
                 error = null
                 val input = PlaylistInput(
                     name = name,
-                    kind = if (tab == 0) PlaylistKind.M3U_URL else PlaylistKind.PROVIDER_LOGIN,
+                    kind = PlaylistKind.PROVIDER_LOGIN,
                     address = address,
                     username = username,
                     password = password
@@ -691,7 +687,7 @@ private fun ManualPlaylistScreen(
                     loading = false
                 }
             },
-            enabled = !loading && name.isNotBlank() && address.isNotBlank() && (tab == 0 || username.isNotBlank() && password.isNotBlank()),
+            enabled = !loading && name.isNotBlank() && address.isNotBlank() && username.isNotBlank() && password.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(52.dp)
         ) {
             if (loading) CircularProgressIndicator(Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
