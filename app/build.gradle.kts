@@ -16,8 +16,8 @@ android {
         applicationId = "com.fourkplus.tvplayer"
         minSdk = 26
         targetSdk = 35
-        versionCode = 43
-        versionName = "0.13.4"
+        versionCode = 44
+        versionName = "0.13.5"
     }
 
     buildFeatures { compose = true }
