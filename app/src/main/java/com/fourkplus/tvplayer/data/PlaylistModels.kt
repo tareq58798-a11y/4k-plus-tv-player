@@ -10,6 +10,9 @@ data class PlaylistInput(
     val password: String = ""
 )
 
+/** Stable identity for a source across saved-source storage and on-disk cache naming. Deliberately excludes the password. */
+internal fun PlaylistInput.sourceId(): String = "${kind.name}|${address.trim()}|${username.trim()}"
+
 enum class MediaKind { LIVE, MOVIE, SERIES }
 
 data class PlaylistItem(

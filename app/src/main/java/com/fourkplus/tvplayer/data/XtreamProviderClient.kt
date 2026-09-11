@@ -1,0 +1,310 @@
+package com.fourkplus.tvplayer.data
+
+import java.io.IOException
+import java.net.URI
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONArray
+import org.json.JSONObject
+
+/**
+ * Network access to Xtream Codes-style provider panels (player_api.php auth, category/stream
+ * listing, movie/series detail lookups) and plain M3U playlists. Pure networking/parsing — no
+ * on-device storage or saved-source concerns, which live in [PlaylistSourceStore]/[PlaylistCacheStore].
+ */
+internal class XtreamProviderClient {
+
+    suspend fun load(input: PlaylistInput): LoadedPlaylist = withContext(Dispatchers.IO) {
+        when (input.kind) {
+            PlaylistKind.M3U_URL -> loadM3u(input)
+            PlaylistKind.PROVIDER_LOGIN -> loadProvider(input)
+        }
+    }
+
+    suspend fun movieDetails(source: PlaylistInput, movie: PlaylistItem): MovieDetailsInfo = withContext(Dispatchers.IO) {
+        val movieId = requireNotNull(movie.channelId)
+        var lastError: Exception? = null
+        for (server in addressCandidates(source.address).map(::normalizeServerBase)) {
+            try {
+                val root = JSONObject(download(apiUrl(server, source, "get_vod_info") + "&vod_id=${encode(movieId)}"))
+                val info = root.optJSONObject("info") ?: root
+                val movieData = root.optJSONObject("movie_data")
+                val backdrop = info.optJSONArray("backdrop_path")?.let { array ->
+                    (0 until array.length()).asSequence().map { array.optString(it) }.firstOrNull(String::isNotBlank)
+                } ?: info.optString("backdrop_path").takeIf { it.startsWith("http", true) }
+                val trailer = info.optString("youtube_trailer").takeIf(String::isNotBlank)?.let { value ->
+                    if (value.startsWith("http", true)) value else "https://www.youtube.com/watch?v=$value"
+                }
+                val originalTitle = (
+                    firstText(info, "o_name", "original_name", "original_title", "title", "name")
+                        ?: movieData?.let { firstText(it, "o_name", "original_name", "original_title", "name") }
+                    )?.takeIf(::containsLatinText)
+                return@withContext MovieDetailsInfo(
+                    originalTitle = originalTitle,
+                    description = firstText(info, "plot", "description"),
+                    year = firstText(info, "year", "releasedate", "releaseDate")?.take(4),
+                    rating = firstText(info, "rating")?.takeUnless { it == "0" || it == "0.0" },
+                    duration = firstText(info, "duration", "duration_secs"),
+                    genre = firstText(info, "genre"),
+                    cast = firstText(info, "cast", "actors"),
+                    director = firstText(info, "director"),
+                    backdropUrl = backdrop,
+                    posterUrl = firstText(info, "movie_image", "cover_big", "cover")
+                        ?: movieData?.optString("stream_icon")?.takeIf(String::isNotBlank),
+                    trailerUrl = trailer
+                )
+            } catch (error: Exception) { lastError = error }
+        }
+        throw lastError ?: IllegalArgumentException("Movie information could not be loaded.")
+    }
+
+    suspend fun seriesDetails(source: PlaylistInput, series: PlaylistItem): SeriesDetailsInfo = withContext(Dispatchers.IO) {
+        val seriesId = requireNotNull(series.channelId)
+        var lastError: Exception? = null
+        for (server in addressCandidates(source.address).map(::normalizeServerBase)) {
+            try {
+                val root = JSONObject(download(apiUrl(server, source, "get_series_info") + "&series_id=${encode(seriesId)}"))
+                val info = root.optJSONObject("info") ?: JSONObject()
+                val backdrop = info.optJSONArray("backdrop_path")?.let { array ->
+                    (0 until array.length()).asSequence().map { array.optString(it) }
+                        .firstOrNull(String::isNotBlank)
+                } ?: info.optString("backdrop_path").takeIf { it.startsWith("http", true) }
+                val episodesObject = root.optJSONObject("episodes") ?: JSONObject()
+                val episodes = buildList {
+                    val seasonKeys = episodesObject.keys()
+                    while (seasonKeys.hasNext()) {
+                        val seasonKey = seasonKeys.next()
+                        val seasonNumber = seasonKey.toIntOrNull() ?: continue
+                        val seasonEpisodes = episodesObject.optJSONArray(seasonKey) ?: continue
+                        for (index in 0 until seasonEpisodes.length()) {
+                            val episode = seasonEpisodes.optJSONObject(index) ?: continue
+                            val id = episode.optString("id")
+                            if (id.isBlank()) continue
+                            val episodeInfo = episode.optJSONObject("info") ?: JSONObject()
+                            val extension = episode.optString("container_extension", "mp4").ifBlank { "mp4" }
+                            val episodeNumber = episode.optInt("episode_num", index + 1)
+                            add(
+                                SeriesEpisode(
+                                    id = id,
+                                    seasonNumber = seasonNumber,
+                                    episodeNumber = episodeNumber,
+                                    title = firstText(episode, "title", "name")
+                                        ?: "Episode $episodeNumber",
+                                    streamUrl = "$server/series/${encode(source.username)}/${encode(source.password)}/$id.$extension",
+                                    thumbnailUrl = firstText(episodeInfo, "movie_image", "cover_big", "cover"),
+                                    duration = firstText(episodeInfo, "duration", "duration_secs"),
+                                    description = firstText(episodeInfo, "plot", "description")
+                                )
+                            )
+                        }
+                    }
+                }.sortedWith(compareBy<SeriesEpisode> { it.seasonNumber }.thenBy { it.episodeNumber })
+                return@withContext SeriesDetailsInfo(
+                    originalTitle = firstText(info, "o_name", "original_name", "original_title", "name")
+                        ?.takeIf(::containsLatinText),
+                    description = firstText(info, "plot", "description"),
+                    year = firstText(info, "year", "releaseDate", "releasedate")?.take(4),
+                    rating = firstText(info, "rating")?.takeUnless { it == "0" || it == "0.0" },
+                    genre = firstText(info, "genre"),
+                    cast = firstText(info, "cast", "actors"),
+                    director = firstText(info, "director"),
+                    backdropUrl = backdrop,
+                    posterUrl = firstText(info, "cover_big", "cover") ?: series.logoUrl,
+                    episodes = episodes
+                )
+            } catch (error: Exception) {
+                lastError = error
+            }
+        }
+        throw lastError ?: IllegalArgumentException("Series information could not be loaded.")
+    }
+
+    private fun loadM3u(input: PlaylistInput): LoadedPlaylist {
+        var lastError: Exception? = null
+        for (address in addressCandidates(input.address)) {
+            try { return M3uParser.parse(input.name, download(address)) }
+            catch (error: Exception) { lastError = error }
+        }
+        throw lastError ?: IllegalArgumentException("The playlist address could not be reached.")
+    }
+
+    private fun loadProvider(input: PlaylistInput): LoadedPlaylist {
+        var lastError: Exception? = null
+        for (server in addressCandidates(input.address).map(::normalizeServerBase)) {
+            try { return loadProviderFromServer(input, server) }
+            catch (error: Exception) { lastError = error }
+        }
+        throw lastError ?: IllegalArgumentException("The provider could not be reached.")
+    }
+
+    private fun loadProviderFromServer(input: PlaylistInput, server: String): LoadedPlaylist {
+        val auth = JSONObject(download(apiUrl(server, input, null)).trimStart(Char(0xFEFF)))
+        val userInfo = auth.optJSONObject("user_info")
+            ?: throw IllegalArgumentException("This server did not return a compatible provider login response.")
+        val authenticated = userInfo.optInt("auth", 0) == 1
+        val status = userInfo.optString("status", "")
+        require(authenticated && !status.equals("Disabled", true) && !status.equals("Expired", true)) {
+            "The provider rejected this username or password, or the account is inactive."
+        }
+
+        val liveCategories = runCatching { categories(apiUrl(server, input, "get_live_categories")) }.getOrDefault(emptyMap())
+        val movieCategories = runCatching { categories(apiUrl(server, input, "get_vod_categories")) }.getOrDefault(emptyMap())
+        val seriesCategories = runCatching { categories(apiUrl(server, input, "get_series_categories")) }.getOrDefault(emptyMap())
+        val items = buildList {
+            addAll(liveItems(JSONArray(download(apiUrl(server, input, "get_live_streams"))), liveCategories, server, input))
+            addAll(movieItems(JSONArray(download(apiUrl(server, input, "get_vod_streams"))), movieCategories, server, input))
+            addAll(seriesItems(JSONArray(download(apiUrl(server, input, "get_series"))), seriesCategories))
+        }
+        require(items.isNotEmpty()) { "The account connected successfully but contains no available content." }
+        val expiry = userInfo.optString("exp_date").toLongOrNull()?.takeIf { it > 0L }
+            ?: userInfo.optLong("exp_date", 0L).takeIf { it > 0L }
+        return LoadedPlaylist(
+            name = input.name.trim(),
+            items = items,
+            groups = items.map { it.group }.distinct(),
+            accountStatus = status.takeIf(String::isNotBlank),
+            expiryEpochSeconds = expiry
+        )
+    }
+
+    private fun categories(url: String): Map<String, String> {
+        val array = JSONArray(download(url))
+        return buildMap {
+            for (index in 0 until array.length()) {
+                val item = array.optJSONObject(index) ?: continue
+                put(item.optString("category_id"), item.optString("category_name", "Other"))
+            }
+        }
+    }
+
+    private fun liveItems(array: JSONArray, groups: Map<String, String>, server: String, input: PlaylistInput) = buildList {
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            val id = item.optString("stream_id")
+            if (id.isBlank()) continue
+            add(PlaylistItem(
+                item.optString("name", "Unnamed channel"),
+                "$server/live/${encode(input.username)}/${encode(input.password)}/$id.ts",
+                groups[item.optString("category_id")] ?: "Other",
+                item.optString("stream_icon").takeIf(String::isNotBlank),
+                // stream_id is the provider's unique channel identity. EPG IDs
+                // may be blank or shared by several streams and must not be
+                // used for favorites or viewing history.
+                id,
+                MediaKind.LIVE
+            ))
+        }
+    }
+
+    private fun movieItems(array: JSONArray, groups: Map<String, String>, server: String, input: PlaylistInput) = buildList {
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            val id = item.optString("stream_id")
+            if (id.isBlank()) continue
+            val extension = item.optString("container_extension", "mp4").ifBlank { "mp4" }
+            add(PlaylistItem(
+                item.optString("name", "Unnamed movie"),
+                "$server/movie/${encode(input.username)}/${encode(input.password)}/$id.$extension",
+                groups[item.optString("category_id")] ?: "Other",
+                item.optString("stream_icon").takeIf(String::isNotBlank), id, MediaKind.MOVIE,
+                description = item.optString("plot").takeIf(String::isNotBlank),
+                year = item.optString("year").takeIf(String::isNotBlank)
+                    ?: item.optString("releaseDate").take(4).takeIf(String::isNotBlank),
+                rating = item.optString("rating").takeIf(String::isNotBlank),
+                duration = item.optString("duration").takeIf(String::isNotBlank)
+            ))
+        }
+    }
+
+    private fun seriesItems(array: JSONArray, groups: Map<String, String>) = buildList {
+        for (index in 0 until array.length()) {
+            val item = array.optJSONObject(index) ?: continue
+            val id = item.optString("series_id")
+            if (id.isBlank()) continue
+            add(PlaylistItem(
+                item.optString("name", "Unnamed series"), "series://$id",
+                groups[item.optString("category_id")] ?: "Other",
+                item.optString("cover").takeIf(String::isNotBlank), id, MediaKind.SERIES
+            ))
+        }
+    }
+
+    private fun apiUrl(server: String, input: PlaylistInput, action: String?): String = buildString {
+        append(server).append("/player_api.php?username=").append(encode(input.username))
+        append("&password=").append(encode(input.password))
+        if (action != null) append("&action=").append(action)
+    }
+
+    private fun firstText(objectValue: JSONObject, vararg keys: String): String? =
+        keys.asSequence().map { objectValue.optString(it).trim() }
+            .firstOrNull { it.isNotBlank() && !it.equals("null", true) }
+
+    private fun containsLatinText(value: String): Boolean = value.any { it in 'A'..'Z' || it in 'a'..'z' }
+
+    private fun normalizeServerBase(value: String): String {
+        val uri = URI(value)
+        val scheme = if (uri.port == 80 && uri.scheme.equals("https", true)) "http" else uri.scheme.lowercase()
+        val port = if (uri.port == -1) "" else ":${uri.port}"
+        val path = uri.path.orEmpty().trimEnd('/').takeUnless { it == "/" }.orEmpty()
+        return "$scheme://${uri.host}$port$path"
+    }
+
+    private fun addressCandidates(value: String): List<String> {
+        val trimmed = value.trim()
+        require(trimmed.isNotBlank()) { "Enter a playlist or server address." }
+        val candidates = when {
+            trimmed.startsWith("https://", true) && URI(trimmed).port == 80 ->
+                listOf(trimmed.replaceFirst(Regex("^https", RegexOption.IGNORE_CASE), "http"))
+            trimmed.startsWith("http://", true) || trimmed.startsWith("https://", true) -> listOf(trimmed)
+            else -> listOf("http://$trimmed", "https://$trimmed")
+        }
+        candidates.forEach { require(URI(it).host != null) { "Enter a valid server or playlist address." } }
+        return candidates
+    }
+
+    private fun download(url: String): String {
+        // Let OkHttp supply its standard headers, gzip decoding and redirects.
+        // Never log request URLs: the query contains account credentials.
+        val request = Request.Builder().url(url).get().build()
+        try {
+            return httpClient.newCall(request).execute().use { response ->
+                require(response.isSuccessful) {
+                    "The server returned HTTP ${response.code}. Please try again."
+                }
+                val body = response.body
+                    ?: throw IllegalArgumentException("The server returned an empty response.")
+                body.charStream().use { reader ->
+                    buildString {
+                        val buffer = CharArray(8192)
+                        while (true) {
+                            val count = reader.read(buffer)
+                            if (count == -1) break
+                            require(length.toLong() + count <= 80_000_000L) {
+                                "The provider response is too large to load safely."
+                            }
+                            append(buffer, 0, count)
+                        }
+                    }
+                }
+            }
+        } catch (error: IOException) {
+            // Transport exception messages can contain the credential-bearing URL.
+            throw IllegalArgumentException("Could not connect to the server. Check the address and your connection.")
+        }
+    }
+
+    private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.toString())
+
+    private companion object {
+        val httpClient = OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
+            .callTimeout(60, TimeUnit.SECONDS)
+            .build()
+    }
+}
