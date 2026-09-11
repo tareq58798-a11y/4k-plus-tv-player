@@ -2,13 +2,19 @@ package com.fourkplus.tvplayer
 
 import android.content.Intent
 import android.net.Uri
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -21,13 +27,17 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.window.DialogWindowProvider
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -38,6 +48,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import coil.compose.AsyncImage
 import com.fourkplus.tvplayer.data.PlaylistItem
 import com.fourkplus.tvplayer.ui.theme.*
 import kotlinx.coroutines.delay
@@ -59,13 +70,61 @@ internal fun buildFourKPlusExoPlayer(context: android.content.Context, skipSecon
         .apply { volume = if (muted) 0f else 1f }
 }
 
+/** Horizontal strip of sibling items (other episodes of a series, other channels in a category) shown under the player, with the currently-playing one highlighted and every other one tappable to switch directly. */
+@Composable
+private fun RelatedItemsStrip(
+    items: List<PlaylistItem>,
+    currentKey: String,
+    onSelect: (PlaylistItem) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    if (items.size <= 1) return
+    LazyRow(
+        modifier = modifier,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        items(items, key = { channelKey(it) }) { related ->
+            val active = channelKey(related) == currentKey
+            Column(
+                Modifier.width(88.dp).clickable(enabled = !active) { onSelect(related) },
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp))
+                        .background(Color.White.copy(alpha = .1f))
+                        .then(if (active) Modifier.border(2.dp, Cyan, RoundedCornerShape(8.dp)) else Modifier),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (!related.logoUrl.isNullOrBlank()) {
+                        AsyncImage(related.logoUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    } else {
+                        Icon(Icons.Default.PlayCircle, null, tint = Color.White.copy(alpha = .6f))
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    related.name,
+                    color = if (active) Cyan else Color.White,
+                    fontSize = 10.sp,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Normal,
+                    maxLines = 1,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+        }
+    }
+}
+
 @Composable
 internal fun MoviePlayer(
     movie: PlaylistItem,
     startPosition: Long,
     onProgress: (Long, Long) -> Unit,
     onExit: () -> Unit,
-    modifier: Modifier
+    modifier: Modifier,
+    relatedItems: List<PlaylistItem> = emptyList(),
+    onRelatedItemChange: (PlaylistItem) -> Unit = {}
 ) {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
@@ -125,10 +184,16 @@ internal fun MoviePlayer(
     }
     var error by remember(movie) { mutableStateOf<String?>(null) }
     var fullscreen by remember(movie) { mutableStateOf(true) }
+    var controllerVisible by remember { mutableStateOf(true) }
+    var relatedStripExpanded by remember { mutableStateOf(false) }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(movie) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
     var seekFeedback by remember { mutableStateOf<Pair<Boolean, Long>?>(null) }
+    val nextRelatedItem = remember(movie, relatedItems) {
+        val currentIndex = relatedItems.indexOfFirst { channelKey(it) == channelKey(movie) }
+        relatedItems.getOrNull(currentIndex + 1)
+    }
     LaunchedEffect(seekFeedback?.second) {
         if (seekFeedback != null) {
             delay(650)
@@ -160,6 +225,11 @@ internal fun MoviePlayer(
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlayerError(playbackException: PlaybackException) { error = playbackFailureMessage(playbackException) }
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == androidx.media3.common.Player.STATE_ENDED) {
+                    nextRelatedItem?.let(onRelatedItemChange)
+                }
+            }
         }
         player.addListener(listener)
         onDispose {
@@ -175,10 +245,21 @@ internal fun MoviePlayer(
                 factory = {
                     PlayerView(it).apply {
                         useController = true
+                        setShowPreviousButton(false)
+                        setShowNextButton(false)
+                        setControllerVisibilityListener(
+                            PlayerView.ControllerVisibilityListener { visibility ->
+                                controllerVisible = visibility == android.view.View.VISIBLE
+                            }
+                        )
                         resizeMode = videoResizeMode
                         applyRequestedAspectRatio(this, videoMode)
                         this.player = player
-                        installDoubleTapSeek(this, player, skipSeconds) { forward ->
+                        installDoubleTapSeek(
+                            this, player, skipSeconds,
+                            onSwipeUp = { relatedStripExpanded = true },
+                            onSwipeDown = { relatedStripExpanded = false }
+                        ) { forward ->
                             seekFeedback = forward to System.nanoTime()
                         }
                     }
@@ -187,7 +268,11 @@ internal fun MoviePlayer(
                     it.player = player
                     it.resizeMode = videoResizeMode
                     applyRequestedAspectRatio(it, videoMode)
-                    installDoubleTapSeek(it, player, skipSeconds) { forward ->
+                    installDoubleTapSeek(
+                        it, player, skipSeconds,
+                        onSwipeUp = { relatedStripExpanded = true },
+                        onSwipeDown = { relatedStripExpanded = false }
+                    ) { forward ->
                         seekFeedback = forward to System.nanoTime()
                     }
                 }, modifier = Modifier.fillMaxSize()
@@ -232,6 +317,30 @@ internal fun MoviePlayer(
                     Text(it, color = Color.White, modifier = Modifier.padding(16.dp))
                 }
             }
+            if (controllerVisible && !relatedStripExpanded && relatedItems.size > 1) {
+                Icon(
+                    Icons.Default.KeyboardArrowUp,
+                    "Swipe up for other episodes",
+                    tint = Color.White.copy(alpha = .6f),
+                    modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 8.dp).size(22.dp)
+                )
+            }
+            if (relatedStripExpanded && relatedItems.size > 1) {
+                Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 64.dp)) {
+                    Text(
+                        "Other episodes",
+                        color = Color.White.copy(alpha = .75f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(start = 10.dp, bottom = 2.dp)
+                    )
+                    RelatedItemsStrip(
+                        items = relatedItems,
+                        currentKey = channelKey(movie),
+                        onSelect = onRelatedItemChange
+                    )
+                }
+            }
         }
     }
     }
@@ -239,7 +348,10 @@ internal fun MoviePlayer(
         Dialog(
             onDismissRequest = onExit,
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) { playerContent(Modifier.fillMaxSize().navigationBarsPadding().padding(bottom = 56.dp), RectangleShape) }
+        ) {
+            AllowDrawingUnderCutout()
+            playerContent(Modifier.fillMaxSize(), RectangleShape)
+        }
     } else {
         playerContent(modifier.fillMaxWidth(), RoundedCornerShape(18.dp))
     }
@@ -288,6 +400,21 @@ private fun DoubleTapSeekFeedback(
     }
 }
 
+/** Compose Dialogs open their own Window, which doesn't inherit the Activity's
+ *  cutout mode, leaving a black bar next to the notch in landscape. */
+@Composable
+private fun AllowDrawingUnderCutout() {
+    val view = LocalView.current
+    SideEffect {
+        val dialogWindow = (view.parent as? DialogWindowProvider)?.window
+        if (dialogWindow != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+            dialogWindow.attributes = dialogWindow.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            }
+        }
+    }
+}
+
 private fun applyRequestedAspectRatio(view: PlayerView, mode: String) {
     val targetRatio = when (mode) {
         "16:9" -> 16f / 9f
@@ -321,12 +448,20 @@ private fun installDoubleTapSeek(
     player: Player,
     skipSeconds: Int,
     onDoubleTapExit: (() -> Unit)? = null,
+    onSingleTap: (() -> Unit)? = null,
+    onSwipeUp: (() -> Unit)? = null,
+    onSwipeDown: (() -> Unit)? = null,
     onSeekFeedback: (Boolean) -> Unit
 ) {
     val detector = android.view.GestureDetector(
         view.context,
         object : android.view.GestureDetector.SimpleOnGestureListener() {
             override fun onDown(event: android.view.MotionEvent): Boolean = true
+
+            override fun onSingleTapConfirmed(event: android.view.MotionEvent): Boolean {
+                onSingleTap?.invoke()
+                return onSingleTap != null
+            }
 
             override fun onDoubleTap(event: android.view.MotionEvent): Boolean {
                 if (onDoubleTapExit != null) {
@@ -350,7 +485,27 @@ private fun installDoubleTapSeek(
             }
         }
     )
+    var dragStartX = 0f
+    var dragStartY = 0f
+    var dragHandled = false
     view.setOnTouchListener { _, event ->
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> {
+                dragStartX = event.x
+                dragStartY = event.y
+                dragHandled = false
+            }
+            android.view.MotionEvent.ACTION_MOVE -> {
+                if (!dragHandled && (onSwipeUp != null || onSwipeDown != null)) {
+                    val deltaY = event.y - dragStartY
+                    val deltaX = event.x - dragStartX
+                    if (kotlin.math.abs(deltaY) > 60 && kotlin.math.abs(deltaY) > kotlin.math.abs(deltaX)) {
+                        if (deltaY < 0) onSwipeUp?.invoke() else onSwipeDown?.invoke()
+                        dragHandled = true
+                    }
+                }
+            }
+        }
         detector.onTouchEvent(event)
         false
     }
@@ -602,6 +757,12 @@ internal fun LiveChannelPreview(
     var playbackError by remember { mutableStateOf<String?>(null) }
     var fullscreen by remember { mutableStateOf(false) }
     var controllerVisible by remember { mutableStateOf(true) }
+    var controllerShownAt by remember { mutableLongStateOf(System.nanoTime()) }
+    var stripExpanded by remember { mutableStateOf(false) }
+    fun showControllerBriefly() {
+        controllerVisible = true
+        controllerShownAt = System.nanoTime()
+    }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(channel?.streamUrl) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
@@ -613,6 +774,12 @@ internal fun LiveChannelPreview(
         if (seekFeedback != null) {
             delay(650)
             seekFeedback = null
+        }
+    }
+    LaunchedEffect(controllerShownAt, controllerVisible) {
+        if (controllerVisible) {
+            delay(4_000)
+            controllerVisible = false
         }
     }
     val player = remember(skipSeconds) {
@@ -679,35 +846,59 @@ internal fun LiveChannelPreview(
                 AndroidView(
                     factory = {
                         PlayerView(it).apply {
-                            useController = true
-                            controllerShowTimeoutMs = 4_000
-                            setControllerVisibilityListener(
-                                PlayerView.ControllerVisibilityListener { visibility ->
-                                    controllerVisible = visibility == android.view.View.VISIBLE
-                                }
-                            )
+                            useController = false
                             resizeMode = videoResizeMode
                             this.player = player
-                            if (hostedFullscreen) {
-                                findViewById<android.view.View>(androidx.media3.ui.R.id.exo_center_controls)?.visibility =
-                                    android.view.View.GONE
-                            }
-                            installDoubleTapSeek(this, player, skipSeconds, fullscreenDoubleTapExit) { forward ->
-                            seekFeedback = forward to System.nanoTime()
-                        }
                         }
                     },
                     update = {
                         it.player = player
                         it.resizeMode = videoResizeMode
-                        it.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_center_controls)?.visibility =
-                            if (hostedFullscreen) android.view.View.GONE else android.view.View.VISIBLE
                         applyRequestedAspectRatio(it, videoMode)
-                        installDoubleTapSeek(it, player, skipSeconds, fullscreenDoubleTapExit) { forward ->
-                        seekFeedback = forward to System.nanoTime()
-                    }
                     },
                     modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    Modifier.fillMaxSize()
+                        .pointerInput(channel.streamUrl, skipSeconds, fullscreenDoubleTapExit) {
+                            detectTapGestures(
+                                onTap = {
+                                    if (controllerVisible) controllerVisible = false else showControllerBriefly()
+                                },
+                                onDoubleTap = { offset ->
+                                    if (fullscreenDoubleTapExit != null) {
+                                        fullscreenDoubleTapExit()
+                                    } else if (player.isCurrentMediaItemSeekable) {
+                                        val intervalMs = skipSeconds * 1_000L
+                                        val forward = offset.x >= size.width / 2f
+                                        val destination = if (forward) {
+                                            val target = player.currentPosition + intervalMs
+                                            if (player.duration > 0L) target.coerceAtMost(player.duration) else target
+                                        } else {
+                                            (player.currentPosition - intervalMs).coerceAtLeast(0L)
+                                        }
+                                        player.seekTo(destination)
+                                        seekFeedback = forward to System.nanoTime()
+                                    }
+                                }
+                            )
+                        }
+                        .pointerInput(Unit) {
+                            var accumulated = 0f
+                            detectVerticalDragGestures(
+                                onDragStart = { accumulated = 0f },
+                                onVerticalDrag = { change, dragAmount ->
+                                    accumulated += dragAmount
+                                    if (accumulated < -60) {
+                                        stripExpanded = true
+                                        change.consume()
+                                    } else if (accumulated > 60) {
+                                        stripExpanded = false
+                                        change.consume()
+                                    }
+                                }
+                            )
+                        }
                 )
                 seekFeedback?.let { feedback ->
                     DoubleTapSeekFeedback(
@@ -752,57 +943,6 @@ internal fun LiveChannelPreview(
                         settings.edit().putString("video_mode", it).apply()
                     }
                 )
-                if (controllerVisible && seekFeedback == null) {
-                    val currentIndex = channelList.indexOfFirst { channelKey(it) == channelKey(channel) }
-                    val previous = channelList.getOrNull(currentIndex - 1)
-                    val next = channelList.getOrNull(currentIndex + 1)
-                    Surface(
-                        modifier = Modifier.align(Alignment.TopStart)
-                            .then(
-                                if (fullscreen || hostedFullscreen) Modifier
-                                    .windowInsetsPadding(WindowInsets.displayCutout)
-                                    .padding(
-                                        start = if (hostedFullscreen) 64.dp else 16.dp,
-                                        end = 16.dp
-                                    )
-                                else Modifier
-                            )
-                            .padding(8.dp)
-                            .fillMaxWidth(.58f),
-                        color = Color.Black.copy(alpha = .72f),
-                        shape = RoundedCornerShape(11.dp)
-                    ) {
-                        Row(
-                            Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            IconButton(
-                                onClick = { previous?.let(onChannelChange) },
-                                enabled = previous != null
-                            ) {
-                                Icon(Icons.Default.SkipPrevious, "Previous channel", tint = Color.White)
-                            }
-                            Text(
-                                channel.name,
-                                color = Color.White,
-                                fontWeight = FontWeight.SemiBold,
-                                maxLines = 2,
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clickable(enabled = onFullscreenDoubleTap != null) {
-                                        onFullscreenDoubleTap?.invoke()
-                                    }
-                                    .padding(vertical = 10.dp)
-                            )
-                            IconButton(
-                                onClick = { next?.let(onChannelChange) },
-                                enabled = next != null
-                            ) {
-                                Icon(Icons.Default.SkipNext, "Next channel", tint = Color.White)
-                            }
-                        }
-                    }
-                }
                 if (playbackError != null) {
                     Surface(
                         modifier = Modifier.align(Alignment.Center).padding(18.dp),
@@ -816,6 +956,37 @@ internal fun LiveChannelPreview(
                         }
                     }
                 }
+                if (controllerVisible && !stripExpanded && channelList.size > 1) {
+                    Icon(
+                        Icons.Default.KeyboardArrowUp,
+                        "Swipe up for other channels",
+                        tint = Color.White.copy(alpha = .6f),
+                        modifier = Modifier.align(Alignment.BottomCenter)
+                            .then(if (fullscreen || hostedFullscreen) Modifier.navigationBarsPadding() else Modifier)
+                            .padding(bottom = 8.dp)
+                            .size(22.dp)
+                    )
+                }
+                if (stripExpanded && channelList.size > 1) {
+                    Column(
+                        Modifier.align(Alignment.BottomCenter)
+                            .then(if (fullscreen || hostedFullscreen) Modifier.navigationBarsPadding() else Modifier)
+                            .padding(bottom = 8.dp)
+                    ) {
+                        Text(
+                            "More in this category",
+                            color = Color.White.copy(alpha = .75f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(start = 10.dp, bottom = 2.dp)
+                        )
+                        RelatedItemsStrip(
+                            items = channelList,
+                            currentKey = channel.let(::channelKey),
+                            onSelect = onChannelChange
+                        )
+                    }
+                }
             }
         }
     }
@@ -824,7 +995,10 @@ internal fun LiveChannelPreview(
         Dialog(
             onDismissRequest = { fullscreen = false },
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) { playerContent(Modifier.fillMaxSize(), RectangleShape) }
+        ) {
+            AllowDrawingUnderCutout()
+            playerContent(Modifier.fillMaxSize(), RectangleShape)
+        }
     } else {
         playerContent(modifier, RoundedCornerShape(18.dp))
     }

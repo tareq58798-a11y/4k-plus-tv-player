@@ -103,6 +103,17 @@ internal fun SeriesScreen(
         store.edit().putStringSet("favorites", updated).apply()
     }
 
+    fun episodePlaylistItem(series: PlaylistItem, episode: SeriesEpisode) = PlaylistItem(
+        name = "${series.name} • S${episode.seasonNumber} E${episode.episodeNumber} • ${episode.title}",
+        streamUrl = episode.streamUrl,
+        group = series.name,
+        logoUrl = episode.thumbnailUrl ?: series.logoUrl,
+        channelId = episode.id,
+        kind = MediaKind.SERIES,
+        description = episode.description,
+        duration = episode.duration
+    )
+
     fun openDetails(series: PlaylistItem) {
         selectedSeries = series
         selectedEpisode = null
@@ -320,24 +331,26 @@ internal fun SeriesScreen(
                     val series = selectedSeries
                     val episode = selectedEpisode
                     if (series != null && episode != null) {
-                        val episodeItem = PlaylistItem(
-                            name = "${series.name} • S${episode.seasonNumber} E${episode.episodeNumber} • ${episode.title}",
-                            streamUrl = episode.streamUrl,
-                            group = series.name,
-                            logoUrl = episode.thumbnailUrl ?: series.logoUrl,
-                            channelId = episode.id,
-                            kind = MediaKind.SERIES,
-                            description = episode.description,
-                            duration = episode.duration
-                        )
+                        val allEpisodes = details?.episodes.orEmpty()
+                        val relatedItems = remember(series, allEpisodes) {
+                            allEpisodes.map { episodePlaylistItem(series, it) }
+                        }
                         MoviePlayer(
-                            movie = episodeItem,
+                            movie = episodePlaylistItem(series, episode),
                             startPosition = progress[episode.id] ?: 0L,
                             onProgress = { position, duration ->
                                 saveEpisodeProgress(series, episode, position, duration)
                             },
                             onExit = { view = SeriesView.DETAILS },
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.weight(1f),
+                            relatedItems = relatedItems,
+                            onRelatedItemChange = { item ->
+                                allEpisodes.firstOrNull { it.id == item.channelId }?.let { next ->
+                                    selectedEpisode = next
+                                    selectedSeason = next.seasonNumber
+                                    recordRecent(series)
+                                }
+                            }
                         )
                     }
                 }

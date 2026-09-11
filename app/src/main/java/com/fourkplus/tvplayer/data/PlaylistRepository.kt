@@ -17,6 +17,15 @@ class PlaylistRepository(context: Context) {
 
     suspend fun load(input: PlaylistInput): Result<LoadedPlaylist> = withContext(Dispatchers.IO) {
         runCatching {
+            // Resolved via our own trusted activation backend, not raw end-user text entry,
+            // so it deliberately skips the ApprovedServers host allowlist below.
+            if (input.kind == PlaylistKind.DEVICE_ACTIVATION) {
+                val resolved = DeviceActivationClient.resolve(input)
+                val playlist = client.load(resolved)
+                sourceStore.saveSource(resolved)
+                cacheStore.save(resolved, playlist)
+                return@runCatching playlist
+            }
             require(ApprovedServers.allows(input)) { "Please add an account using Server 1 or Server 2." }
             val playlist = client.load(input)
             sourceStore.saveSource(input)

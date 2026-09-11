@@ -180,7 +180,12 @@ private fun App() {
                         appPreferences.edit().putString("theme", it.name).apply()
                     },
                     onManual = { screen = Screen.MANUAL },
-                    onMessage = message
+                    onMessage = message,
+                    loadPlaylist = playlistViewModel::addPlaylist,
+                    onConnected = {
+                        screen = Screen.HOME
+                        message("${it.items.size} items loaded")
+                    }
                 )
                 Screen.MANUAL -> ManualPlaylistScreen(
                     onBack = { screen = if (playlistUiState.savedPlaylists.isEmpty()) Screen.ACTIVATION else Screen.PLAYLISTS },
@@ -341,7 +346,9 @@ private fun ActivationScreen(
     themeChoice: ThemeChoice,
     onThemeChange: (ThemeChoice) -> Unit,
     onManual: () -> Unit,
-    onMessage: (String) -> Unit
+    onMessage: (String) -> Unit,
+    loadPlaylist: suspend (PlaylistInput) -> Result<LoadedPlaylist>,
+    onConnected: (LoadedPlaylist) -> Unit
 ) {
     PremiumBackground {
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -366,11 +373,11 @@ private fun ActivationScreen(
 
             if (landscape) {
                 Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
-                    RemoteActivationCard(Modifier.weight(1.15f), onMessage)
+                    RemoteActivationCard(Modifier.weight(1.15f), onMessage, loadPlaylist, onConnected)
                     ManualEntryCard(Modifier.weight(.85f), onManual)
                 }
             } else {
-                RemoteActivationCard(Modifier.fillMaxWidth(), onMessage)
+                RemoteActivationCard(Modifier.fillMaxWidth(), onMessage, loadPlaylist, onConnected)
                 ManualEntryCard(Modifier.fillMaxWidth(), onManual)
             }
 
@@ -404,9 +411,17 @@ private fun ThemeMenu(choice: ThemeChoice, onChange: (ThemeChoice) -> Unit) {
 }
 
 @Composable
-private fun RemoteActivationCard(modifier: Modifier, onMessage: (String) -> Unit) {
+private fun RemoteActivationCard(
+    modifier: Modifier,
+    onMessage: (String) -> Unit,
+    loadPlaylist: suspend (PlaylistInput) -> Result<LoadedPlaylist>,
+    onConnected: (LoadedPlaylist) -> Unit
+) {
+    val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
+    val mac = remember { com.fourkplus.tvplayer.data.DeviceIdentity.mac(context) }
+    val deviceKey = remember { com.fourkplus.tvplayer.data.DeviceIdentity.deviceKey(context) }
     ElevatedCard(
         modifier,
         shape = RoundedCornerShape(24.dp),
@@ -423,8 +438,8 @@ private fun RemoteActivationCard(modifier: Modifier, onMessage: (String) -> Unit
                 }
             }
             Text("Use these codes in your 4K Plus TV dashboard. Refresh here after a playlist is assigned.")
-            DeviceCode("Device ID", "A4:7B:91:2C:8F:30", onMessage)
-            DeviceCode("Device Key", "K7P9-X2QM", onMessage)
+            DeviceCode("Device ID", mac, onMessage)
+            DeviceCode("Device Key", deviceKey, onMessage)
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Surface(
                     color = Orange.copy(alpha = .14f),
@@ -439,12 +454,21 @@ private fun RemoteActivationCard(modifier: Modifier, onMessage: (String) -> Unit
                 }
                 Spacer(Modifier.weight(1f))
                 FilledIconButton(
+                    enabled = !refreshing,
                     onClick = {
                         refreshing = true
                         scope.launch {
-                            delay(700)
+                            loadPlaylist(
+                                PlaylistInput(
+                                    name = "Activated playlist",
+                                    kind = PlaylistKind.DEVICE_ACTIVATION,
+                                    address = "",
+                                    username = mac,
+                                    password = deviceKey
+                                )
+                            ).onSuccess(onConnected)
+                                .onFailure { onMessage(it.message ?: "No playlist assigned yet") }
                             refreshing = false
-                            onMessage("No playlist assigned yet")
                         }
                     }
                 ) {
@@ -514,10 +538,12 @@ private fun ManualPlaylistScreen(
     loadPlaylist: suspend (PlaylistInput) -> Result<LoadedPlaylist>,
     onConnected: (LoadedPlaylist) -> Unit
 ) {
+    var kind by remember { mutableStateOf(PlaylistKind.PROVIDER_LOGIN) }
     var serverIndex by remember { mutableStateOf(0) }
     var name by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
+    var m3uUrl by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -532,19 +558,34 @@ private fun ManualPlaylistScreen(
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
             Text("Add Playlist", fontSize = 26.sp, fontWeight = FontWeight.Bold)
         }
-        Text("Choose your server", style = MaterialTheme.typography.titleMedium)
+        Text("Playlist type", style = MaterialTheme.typography.titleMedium)
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            com.fourkplus.tvplayer.data.ApprovedServers.addresses.forEachIndexed { index, _ ->
-                FilterChip(
-                    selected = serverIndex == index,
-                    onClick = { serverIndex = index; error = null },
-                    enabled = !loading,
-                    label = { Text("Server ${index + 1}") }
-                )
-            }
+            FilterChip(
+                selected = kind == PlaylistKind.PROVIDER_LOGIN,
+                onClick = { kind = PlaylistKind.PROVIDER_LOGIN; error = null },
+                enabled = !loading,
+                label = { Text("Provider login") }
+            )
+            FilterChip(
+                selected = kind == PlaylistKind.M3U_URL,
+                onClick = { kind = PlaylistKind.M3U_URL; error = null },
+                enabled = !loading,
+                label = { Text("M3U URL") }
+            )
         }
         OutlinedTextField(name, { name = it }, enabled = !loading, label = { Text("Playlist name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        run {
+        if (kind == PlaylistKind.PROVIDER_LOGIN) {
+            Text("Choose your server", style = MaterialTheme.typography.titleMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                com.fourkplus.tvplayer.data.ApprovedServers.addresses.forEachIndexed { index, _ ->
+                    FilterChip(
+                        selected = serverIndex == index,
+                        onClick = { serverIndex = index; error = null },
+                        enabled = !loading,
+                        label = { Text("Server ${index + 1}") }
+                    )
+                }
+            }
             Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 OutlinedTextField(username, { username = it }, label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(
@@ -553,6 +594,18 @@ private fun ManualPlaylistScreen(
                     modifier = Modifier.fillMaxWidth()
                 )
             }
+        } else {
+            OutlinedTextField(
+                m3uUrl, { m3uUrl = it },
+                label = { Text("M3U URL") },
+                placeholder = { Text("http://dtamadeus.com/get.php?username=...&password=...&type=m3u_plus") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                "The URL must be on Server 1 (bag41135.wd.4kplus-tv-za.xyz) or Server 2 (dtamadeus.com).",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
         Text("Your details are stored securely on this device.", style = MaterialTheme.typography.bodySmall)
         AnimatedVisibility(error != null) {
@@ -578,13 +631,21 @@ private fun ManualPlaylistScreen(
             onClick = {
                 loading = true
                 error = null
-                val input = PlaylistInput(
-                    name = name,
-                    kind = PlaylistKind.PROVIDER_LOGIN,
-                    address = com.fourkplus.tvplayer.data.ApprovedServers.addresses[serverIndex],
-                    username = username,
-                    password = password
-                )
+                val input = if (kind == PlaylistKind.PROVIDER_LOGIN) {
+                    PlaylistInput(
+                        name = name,
+                        kind = PlaylistKind.PROVIDER_LOGIN,
+                        address = com.fourkplus.tvplayer.data.ApprovedServers.addresses[serverIndex],
+                        username = username,
+                        password = password
+                    )
+                } else {
+                    PlaylistInput(
+                        name = name,
+                        kind = PlaylistKind.M3U_URL,
+                        address = m3uUrl.trim()
+                    )
+                }
                 scope.launch {
                     loadPlaylist(input)
                         .onSuccess(onConnected)
@@ -593,7 +654,8 @@ private fun ManualPlaylistScreen(
                 }
             },
             enabled = !loading && name.isNotBlank() &&
-                username.isNotBlank() && password.isNotBlank(),
+                if (kind == PlaylistKind.PROVIDER_LOGIN) username.isNotBlank() && password.isNotBlank()
+                else m3uUrl.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(52.dp)
         ) {
             if (loading) CircularProgressIndicator(Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
@@ -764,23 +826,8 @@ private fun HomeScreen(
 @Composable
 private fun HomeDeviceInfoBar(playlist: LoadedPlaylist?) {
     val context = LocalContext.current
-    val deviceIdentity = remember {
-        val androidId = android.provider.Settings.Secure.getString(
-            context.contentResolver,
-            android.provider.Settings.Secure.ANDROID_ID
-        ).orEmpty().ifBlank { "4k-plus-tv-player" }
-        java.security.MessageDigest.getInstance("SHA-256")
-            .digest(androidId.toByteArray(Charsets.UTF_8))
-    }
-    val appMac = remember(deviceIdentity) {
-        deviceIdentity.take(6).joinToString(":") { byte -> "%02X".format(byte.toInt() and 0xFF) }
-    }
-    val deviceKey = remember(deviceIdentity) {
-        val value = deviceIdentity.take(4).fold(0L) { result, byte ->
-            (result shl 8) or (byte.toLong() and 0xFF)
-        }
-        "%06d".format(value % 1_000_000L)
-    }
+    val appMac = remember { com.fourkplus.tvplayer.data.DeviceIdentity.mac(context) }
+    val deviceKey = remember { com.fourkplus.tvplayer.data.DeviceIdentity.deviceKey(context) }
     val expiryText = remember(playlist?.expiryEpochSeconds) {
         playlist?.expiryEpochSeconds?.let { epochSeconds ->
             runCatching {
@@ -1211,6 +1258,14 @@ private fun LandscapeLiveBrowser(
     onBack: () -> Unit
 ) {
     var fullscreenChannel by remember { mutableStateOf<PlaylistItem?>(null) }
+    var channelSearch by remember { mutableStateOf("") }
+    var categorySearch by remember { mutableStateOf("") }
+    val searchedChannels = remember(channels, channelSearch) {
+        if (channelSearch.isBlank()) channels else channels.filter { it.name.contains(channelSearch.trim(), true) }
+    }
+    val searchedCategories = remember(categories, categorySearch) {
+        if (categorySearch.isBlank()) categories else categories.filter { it.contains(categorySearch.trim(), true) }
+    }
     fullscreenChannel?.let { active ->
         Box(Modifier.fillMaxSize().background(Color.Black)) {
             LiveChannelPreview(
@@ -1251,8 +1306,21 @@ private fun LandscapeLiveBrowser(
                         IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back", tint = Color.White) }
                         Text("Live TV", color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Black)
                     }
+                    OutlinedTextField(
+                        value = categorySearch,
+                        onValueChange = { categorySearch = it },
+                        placeholder = { Text("Search categories", color = Color.White.copy(alpha = .55f), fontSize = 13.sp) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                            focusedBorderColor = Cyan, unfocusedBorderColor = Color.White.copy(alpha = .3f),
+                            cursorColor = Cyan
+                        ),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
+                    )
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        items(categories) { category ->
+                        items(searchedCategories) { category ->
                             Surface(
                                 onClick = { onCategory(category) },
                                 modifier = Modifier.fillMaxWidth(),
@@ -1277,8 +1345,21 @@ private fun LandscapeLiveBrowser(
                 shape = RoundedCornerShape(16.dp),
                 color = Color.Black.copy(alpha = .54f)
             ) {
-                LazyColumn(contentPadding = PaddingValues(8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    items(channels) { channel ->
+                Column {
+                    OutlinedTextField(
+                        value = channelSearch,
+                        onValueChange = { channelSearch = it },
+                        placeholder = { Text("Search channels", color = Color.White.copy(alpha = .55f)) },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+                            focusedBorderColor = Cyan, unfocusedBorderColor = Color.White.copy(alpha = .3f),
+                            cursorColor = Cyan
+                        ),
+                        modifier = Modifier.fillMaxWidth().padding(8.dp)
+                    )
+                    LazyColumn(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    items(searchedChannels) { channel ->
                         val selected = channelKey(channel) == selectedChannel?.let(::channelKey)
                         Surface(
                             modifier = Modifier.fillMaxWidth().pointerInput(channelKey(channel)) {
@@ -1307,6 +1388,7 @@ private fun LandscapeLiveBrowser(
                                 }
                             }
                         }
+                    }
                     }
                 }
             }

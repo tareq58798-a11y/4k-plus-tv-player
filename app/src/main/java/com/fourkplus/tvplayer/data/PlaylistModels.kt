@@ -1,6 +1,6 @@
 package com.fourkplus.tvplayer.data
 
-enum class PlaylistKind { M3U_URL, PROVIDER_LOGIN }
+enum class PlaylistKind { M3U_URL, PROVIDER_LOGIN, DEVICE_ACTIVATION }
 
 data class PlaylistInput(
     val name: String,

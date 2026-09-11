@@ -218,6 +218,7 @@ internal fun SettingsScreen(
                         when (source?.kind) {
                             com.fourkplus.tvplayer.data.PlaylistKind.PROVIDER_LOGIN -> "Provider login"
                             com.fourkplus.tvplayer.data.PlaylistKind.M3U_URL -> "M3U URL"
+                            com.fourkplus.tvplayer.data.PlaylistKind.DEVICE_ACTIVATION -> "Provider login"
                             null -> "Not available"
                         }
                     )

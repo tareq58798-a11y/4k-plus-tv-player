@@ -23,6 +23,8 @@ internal class XtreamProviderClient {
         when (input.kind) {
             PlaylistKind.M3U_URL -> loadM3u(input)
             PlaylistKind.PROVIDER_LOGIN -> loadProvider(input)
+            // Never reached: PlaylistRepository resolves this kind before calling here.
+            PlaylistKind.DEVICE_ACTIVATION -> throw IllegalStateException("DEVICE_ACTIVATION must be resolved before loading.")
         }
     }
 
