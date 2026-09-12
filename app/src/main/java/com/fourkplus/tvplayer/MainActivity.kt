@@ -355,31 +355,33 @@ private fun RotateExperienceHint(onDismiss: () -> Unit) {
         animationSpec = tween(760),
         label = "rotate_hint"
     )
-    Surface(
-        modifier = Modifier.align(Alignment.Center).padding(28.dp).then(pressFeedback(onDismiss)),
-        shape = RoundedCornerShape(28.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = .96f),
-        shadowElevation = 18.dp
-    ) {
-        Column(
-            Modifier.padding(horizontal = 26.dp, vertical = 22.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Surface(
+            modifier = Modifier.padding(28.dp).then(pressFeedback(onDismiss)),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = .96f),
+            shadowElevation = 18.dp
         ) {
-            Icon(
-                Icons.Default.ScreenRotation,
-                contentDescription = null,
-                tint = Cyan,
-                modifier = Modifier.size(44.dp).graphicsLayer { rotationZ = rotation }
-            )
-            Text("Two ways to enjoy 4K Plus TV", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-            Text(
-                "Browse in portrait. Rotate your phone for the wide-screen viewing experience.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-                textAlign = TextAlign.Center
-            )
-            Text("Tap to continue", color = Cyan, style = MaterialTheme.typography.labelMedium)
+            Column(
+                Modifier.padding(horizontal = 26.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    Icons.Default.ScreenRotation,
+                    contentDescription = null,
+                    tint = Cyan,
+                    modifier = Modifier.size(44.dp).graphicsLayer { rotationZ = rotation }
+                )
+                Text("Two ways to enjoy 4K Plus TV", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                Text(
+                    "Browse in portrait. Rotate your phone for the wide-screen viewing experience.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center
+                )
+                Text("Tap to continue", color = Cyan, style = MaterialTheme.typography.labelMedium)
+            }
         }
     }
 }
