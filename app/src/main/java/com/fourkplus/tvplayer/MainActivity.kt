@@ -538,12 +538,10 @@ private fun ManualPlaylistScreen(
     loadPlaylist: suspend (PlaylistInput) -> Result<LoadedPlaylist>,
     onConnected: (LoadedPlaylist) -> Unit
 ) {
-    var kind by remember { mutableStateOf(PlaylistKind.PROVIDER_LOGIN) }
     var serverIndex by remember { mutableStateOf(0) }
     var name by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var m3uUrl by remember { mutableStateOf("") }
     var loading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
@@ -558,53 +556,24 @@ private fun ManualPlaylistScreen(
             IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
             Text("Add Playlist", fontSize = 26.sp, fontWeight = FontWeight.Bold)
         }
-        Text("Playlist type", style = MaterialTheme.typography.titleMedium)
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            FilterChip(
-                selected = kind == PlaylistKind.PROVIDER_LOGIN,
-                onClick = { kind = PlaylistKind.PROVIDER_LOGIN; error = null },
-                enabled = !loading,
-                label = { Text("Provider login") }
-            )
-            FilterChip(
-                selected = kind == PlaylistKind.M3U_URL,
-                onClick = { kind = PlaylistKind.M3U_URL; error = null },
-                enabled = !loading,
-                label = { Text("M3U URL") }
-            )
-        }
         OutlinedTextField(name, { name = it }, enabled = !loading, label = { Text("Playlist name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        if (kind == PlaylistKind.PROVIDER_LOGIN) {
-            Text("Choose your server", style = MaterialTheme.typography.titleMedium)
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                com.fourkplus.tvplayer.data.ApprovedServers.addresses.forEachIndexed { index, _ ->
-                    FilterChip(
-                        selected = serverIndex == index,
-                        onClick = { serverIndex = index; error = null },
-                        enabled = !loading,
-                        label = { Text("Server ${index + 1}") }
-                    )
-                }
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                OutlinedTextField(username, { username = it }, label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(
-                    password, { password = it }, label = { Text("Password") },
-                    visualTransformation = PasswordVisualTransformation(), singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+        Text("Choose your server", style = MaterialTheme.typography.titleMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            com.fourkplus.tvplayer.data.ApprovedServers.addresses.forEachIndexed { index, _ ->
+                FilterChip(
+                    selected = serverIndex == index,
+                    onClick = { serverIndex = index; error = null },
+                    enabled = !loading,
+                    label = { Text("Server ${index + 1}") }
                 )
             }
-        } else {
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            OutlinedTextField(username, { username = it }, label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth())
             OutlinedTextField(
-                m3uUrl, { m3uUrl = it },
-                label = { Text("M3U URL") },
-                placeholder = { Text("http://dtamadeus.com/get.php?username=...&password=...&type=m3u_plus") },
-                singleLine = true,
+                password, { password = it }, label = { Text("Password") },
+                visualTransformation = PasswordVisualTransformation(), singleLine = true,
                 modifier = Modifier.fillMaxWidth()
-            )
-            Text(
-                "The URL must be on Server 1 (bag41135.wd.4kplus-tv-za.xyz) or Server 2 (dtamadeus.com).",
-                style = MaterialTheme.typography.bodySmall
             )
         }
         Text("Your details are stored securely on this device.", style = MaterialTheme.typography.bodySmall)
@@ -631,21 +600,13 @@ private fun ManualPlaylistScreen(
             onClick = {
                 loading = true
                 error = null
-                val input = if (kind == PlaylistKind.PROVIDER_LOGIN) {
-                    PlaylistInput(
-                        name = name,
-                        kind = PlaylistKind.PROVIDER_LOGIN,
-                        address = com.fourkplus.tvplayer.data.ApprovedServers.addresses[serverIndex],
-                        username = username,
-                        password = password
-                    )
-                } else {
-                    PlaylistInput(
-                        name = name,
-                        kind = PlaylistKind.M3U_URL,
-                        address = m3uUrl.trim()
-                    )
-                }
+                val input = PlaylistInput(
+                    name = name,
+                    kind = PlaylistKind.PROVIDER_LOGIN,
+                    address = com.fourkplus.tvplayer.data.ApprovedServers.addresses[serverIndex],
+                    username = username,
+                    password = password
+                )
                 scope.launch {
                     loadPlaylist(input)
                         .onSuccess(onConnected)
@@ -653,9 +614,7 @@ private fun ManualPlaylistScreen(
                     loading = false
                 }
             },
-            enabled = !loading && name.isNotBlank() &&
-                if (kind == PlaylistKind.PROVIDER_LOGIN) username.isNotBlank() && password.isNotBlank()
-                else m3uUrl.isNotBlank(),
+            enabled = !loading && name.isNotBlank() && username.isNotBlank() && password.isNotBlank(),
             modifier = Modifier.fillMaxWidth().height(52.dp)
         ) {
             if (loading) CircularProgressIndicator(Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
