@@ -189,6 +189,8 @@ internal fun MoviePlayer(
     var fullscreen by remember(movie) { mutableStateOf(true) }
     var controllerVisible by remember { mutableStateOf(true) }
     var relatedStripExpanded by remember { mutableStateOf(false) }
+    val compactPortraitFullscreen = fullscreen &&
+        LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE
     LaunchedEffect(fullscreen) {
         if (!fullscreen) relatedStripExpanded = false
     }
@@ -323,7 +325,7 @@ internal fun MoviePlayer(
                     Text(it, color = Color.White, modifier = Modifier.padding(16.dp))
                 }
             }
-            if (fullscreen && controllerVisible && !relatedStripExpanded && relatedItems.size > 1) {
+            if (fullscreen && !compactPortraitFullscreen && controllerVisible && !relatedStripExpanded && relatedItems.size > 1) {
                 Icon(
                     Icons.Default.KeyboardArrowUp,
                     "Swipe up for other episodes",
@@ -331,7 +333,7 @@ internal fun MoviePlayer(
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 8.dp).size(22.dp)
                 )
             }
-            if (fullscreen && relatedStripExpanded && relatedItems.size > 1) {
+            if (fullscreen && !compactPortraitFullscreen && relatedStripExpanded && relatedItems.size > 1) {
                 Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 64.dp)) {
                     Text(
                         "Other episodes",
@@ -351,8 +353,42 @@ internal fun MoviePlayer(
     }
     }
     if (fullscreen) {
-        FullscreenPlayerDialog(onDismissRequest = onExit) { bounds ->
-            playerContent(bounds, RectangleShape)
+        FullscreenPlayerDialog(onDismissRequest = onExit) { bounds, portrait ->
+            if (portrait) {
+                Column(
+                    modifier = bounds.padding(horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    playerContent(Modifier.fillMaxWidth().aspectRatio(16f / 9f), RectangleShape)
+                    if (relatedItems.size > 1) {
+                        if (relatedStripExpanded) {
+                            Text(
+                                "Other episodes",
+                                color = Color.White.copy(alpha = .75f),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 10.dp, bottom = 2.dp)
+                            )
+                            RelatedItemsStrip(
+                                items = relatedItems,
+                                currentKey = channelKey(movie),
+                                onSelect = onRelatedItemChange,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else if (controllerVisible) {
+                            Icon(
+                                Icons.Default.KeyboardArrowUp,
+                                "Swipe up for other episodes",
+                                tint = Color.White.copy(alpha = .6f),
+                                modifier = Modifier.padding(top = 8.dp).size(22.dp)
+                            )
+                        }
+                    }
+                }
+            } else {
+                playerContent(bounds, RectangleShape)
+            }
         }
     } else {
         playerContent(modifier.fillMaxWidth(), RoundedCornerShape(18.dp))
@@ -411,7 +447,7 @@ private fun DoubleTapSeekFeedback(
 @Composable
 private fun FullscreenPlayerDialog(
     onDismissRequest: () -> Unit,
-    content: @Composable (Modifier) -> Unit
+    content: @Composable (Modifier, Boolean) -> Unit
 ) {
     val portrait = LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE
     Dialog(
@@ -444,7 +480,8 @@ private fun FullscreenPlayerDialog(
             content(
                 Modifier.fillMaxSize()
                     .then(if (portrait) Modifier.safeDrawingPadding() else Modifier)
-                    .clipToBounds()
+                    .clipToBounds(),
+                portrait
             )
         }
     }
@@ -794,7 +831,10 @@ internal fun LiveChannelPreview(
     var controllerVisible by remember { mutableStateOf(true) }
     var controllerShownAt by remember { mutableLongStateOf(System.nanoTime()) }
     var stripExpanded by remember { mutableStateOf(false) }
-    val suggestionsEnabled = fullscreen || hostedFullscreen
+    val portrait = LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE
+    // Embedded portrait previews must stay clean. Suggestions are a fullscreen-only control.
+    val suggestionsEnabled = fullscreen || (hostedFullscreen && !portrait)
+    val compactPortraitFullscreen = fullscreen && portrait
     LaunchedEffect(suggestionsEnabled) {
         if (!suggestionsEnabled) stripExpanded = false
     }
@@ -996,7 +1036,7 @@ internal fun LiveChannelPreview(
                         }
                     }
                 }
-                if (suggestionsEnabled && controllerVisible && !stripExpanded && channelList.size > 1) {
+                if (suggestionsEnabled && !compactPortraitFullscreen && controllerVisible && !stripExpanded && channelList.size > 1) {
                     Icon(
                         Icons.Default.KeyboardArrowUp,
                         "Swipe up for other channels",
@@ -1007,7 +1047,7 @@ internal fun LiveChannelPreview(
                             .size(22.dp)
                     )
                 }
-                if (suggestionsEnabled && stripExpanded && channelList.size > 1) {
+                if (suggestionsEnabled && !compactPortraitFullscreen && stripExpanded && channelList.size > 1) {
                     Column(
                         Modifier.align(Alignment.BottomCenter)
                             .then(if (fullscreen || hostedFullscreen) Modifier.navigationBarsPadding() else Modifier)
@@ -1032,8 +1072,42 @@ internal fun LiveChannelPreview(
     }
     }
     if (fullscreen) {
-        FullscreenPlayerDialog(onDismissRequest = { fullscreen = false }) { bounds ->
-            playerContent(bounds, RectangleShape)
+        FullscreenPlayerDialog(onDismissRequest = { fullscreen = false }) { bounds, isPortrait ->
+            if (isPortrait) {
+                Column(
+                    modifier = bounds.padding(horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    playerContent(Modifier.fillMaxWidth().aspectRatio(16f / 9f), RectangleShape)
+                    if (channelList.size > 1) {
+                        if (stripExpanded) {
+                            Text(
+                                "More in this category",
+                                color = Color.White.copy(alpha = .75f),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 10.dp, bottom = 2.dp)
+                            )
+                            RelatedItemsStrip(
+                                items = channelList,
+                                currentKey = channel?.let(::channelKey).orEmpty(),
+                                onSelect = onChannelChange,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else if (controllerVisible) {
+                            Icon(
+                                Icons.Default.KeyboardArrowUp,
+                                "Swipe up for other channels",
+                                tint = Color.White.copy(alpha = .6f),
+                                modifier = Modifier.padding(top = 8.dp).size(22.dp)
+                            )
+                        }
+                    }
+                }
+            } else {
+                playerContent(bounds, RectangleShape)
+            }
         }
     } else {
         playerContent(modifier, RoundedCornerShape(18.dp))
