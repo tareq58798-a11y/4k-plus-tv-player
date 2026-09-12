@@ -135,6 +135,7 @@ private fun App() {
         }
     }
     val appPreferences = remember { context.getSharedPreferences("app_settings", android.content.Context.MODE_PRIVATE) }
+    var showRotateHint by remember { mutableStateOf(false) }
     val playlistViewModel: PlaylistViewModel = viewModel(factory = PlaylistViewModel.Factory(context.applicationContext))
     val playlistUiState by playlistViewModel.uiState.collectAsStateWithLifecycle()
     val message: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
@@ -143,6 +144,15 @@ private fun App() {
         themeChoice = runCatching {
             ThemeChoice.valueOf(appPreferences.getString("theme", ThemeChoice.SYSTEM.name).orEmpty())
         }.getOrDefault(ThemeChoice.SYSTEM)
+    }
+
+    LaunchedEffect(screen, playlistUiState.bootstrapping) {
+        if (screen == Screen.HOME && !playlistUiState.bootstrapping &&
+            !appPreferences.getBoolean("rotate_hint_seen", false)
+        ) {
+            delay(700)
+            showRotateHint = true
+        }
     }
 
     // Drives the initial LOADING -> ACTIVATION | HOME transition once the ViewModel's bootstrap
@@ -320,7 +330,56 @@ private fun App() {
                     onMessage = message
                 )
             }
+            if (showRotateHint) {
+                RotateExperienceHint(
+                    onDismiss = {
+                        appPreferences.edit().putBoolean("rotate_hint_seen", true).apply()
+                        showRotateHint = false
+                    }
+                )
             }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RotateExperienceHint(onDismiss: () -> Unit) {
+    var animateRotation by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(260)
+        animateRotation = true
+    }
+    val rotation by animateFloatAsState(
+        targetValue = if (animateRotation) 90f else 0f,
+        animationSpec = tween(760),
+        label = "rotate_hint"
+    )
+    Surface(
+        modifier = Modifier.align(Alignment.Center).padding(28.dp).then(pressFeedback(onDismiss)),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .96f),
+        shadowElevation = 18.dp
+    ) {
+        Column(
+            Modifier.padding(horizontal = 26.dp, vertical = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                Icons.Default.ScreenRotation,
+                contentDescription = null,
+                tint = Cyan,
+                modifier = Modifier.size(44.dp).graphicsLayer { rotationZ = rotation }
+            )
+            Text("Two ways to enjoy 4K Plus TV", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+            Text(
+                "Browse in portrait. Rotate your phone for the wide-screen viewing experience.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                style = MaterialTheme.typography.bodySmall,
+                textAlign = TextAlign.Center
+            )
+            Text("Tap to continue", color = Cyan, style = MaterialTheme.typography.labelMedium)
         }
     }
 }
@@ -344,29 +403,41 @@ private fun BrandMark(modifier: Modifier = Modifier) {
 
 @Composable
 private fun PremiumBackground(content: @Composable BoxScope.() -> Unit) {
+    val light = MaterialTheme.colorScheme.background.red > .7f
     Box(
         Modifier.fillMaxSize().background(
             Brush.verticalGradient(
                 listOf(
                     MaterialTheme.colorScheme.background,
                     MaterialTheme.colorScheme.background,
-                    MaterialTheme.colorScheme.primary.copy(alpha = .10f)
+                    if (light) Color(0xFFE7F5FF) else Color(0xFF061A32)
                 )
             )
         )
     ) {
+        // Light mode: controlled sunlight; dark mode: a quiet aurora—both stay behind content.
         Box(
-            Modifier.size(260.dp).align(Alignment.TopEnd)
+            Modifier.size(360.dp).align(Alignment.TopEnd)
                 .background(
-                    Brush.radialGradient(listOf(Cyan.copy(alpha = .18f), Color.Transparent)),
-                    RoundedCornerShape(130.dp)
+                    Brush.radialGradient(
+                        listOf(
+                            if (light) Color(0xFFFFD887).copy(alpha = .26f) else Cyan.copy(alpha = .18f),
+                            Color.Transparent
+                        )
+                    ),
+                    RoundedCornerShape(180.dp)
                 )
         )
         Box(
-            Modifier.size(220.dp).align(Alignment.BottomStart)
+            Modifier.size(300.dp).align(Alignment.BottomStart)
                 .background(
-                    Brush.radialGradient(listOf(Orange.copy(alpha = .11f), Color.Transparent)),
-                    RoundedCornerShape(110.dp)
+                    Brush.radialGradient(
+                        listOf(
+                            if (light) Color(0xFF7AD7FF).copy(alpha = .18f) else Color(0xFF9B7CFF).copy(alpha = .13f),
+                            Color.Transparent
+                        )
+                    ),
+                    RoundedCornerShape(150.dp)
                 )
         )
         content()
@@ -2364,20 +2435,44 @@ private fun SearchResultRow(item: PlaylistItem, onSelect: (PlaylistItem) -> Unit
 
 @Composable
 private fun HomeTile(title: String, subtitle: String, icon: ImageVector, accent: androidx.compose.ui.graphics.Color, modifier: Modifier, onClick: () -> Unit) {
-    ElevatedCard(
-        modifier.heightIn(min = 150.dp).then(pressFeedback(onClick)),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .96f)),
-        elevation = CardDefaults.elevatedCardElevation(defaultElevation = 7.dp)
-    ) {
-        Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                AccentIcon(icon, accent)
-                Icon(Icons.Default.ArrowOutward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .55f), modifier = Modifier.size(18.dp))
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) .975f else 1f, tween(90), label = "home_tile_press")
+    val aurora by animateFloatAsState(if (pressed) .48f else 0f, tween(150), label = "home_tile_aurora")
+    val haptic = LocalHapticFeedback.current
+    Box(
+        modifier.heightIn(min = 150.dp)
+            .graphicsLayer(scaleX = scale, scaleY = scale)
+            .clickable(interactionSource = interaction, indication = LocalIndication.current) {
+                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                onClick()
             }
-            Column {
-                Text(title, fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall)
+    ) {
+        Box(
+            Modifier.fillMaxSize()
+                .padding(vertical = 10.dp)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Color.Transparent, Cyan.copy(alpha = aurora), Color(0xFF9B7CFF).copy(alpha = aurora * .45f))
+                    ),
+                    RoundedCornerShape(26.dp)
+                )
+        )
+        ElevatedCard(
+            modifier = Modifier.fillMaxSize(),
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .96f)),
+            elevation = CardDefaults.elevatedCardElevation(defaultElevation = 7.dp)
+        ) {
+            Column(Modifier.fillMaxSize().padding(18.dp), verticalArrangement = Arrangement.SpaceBetween) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    AccentIcon(icon, accent)
+                    Icon(Icons.Default.ArrowOutward, null, tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = .55f), modifier = Modifier.size(18.dp))
+                }
+                Column {
+                    Text(title, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                    Text(subtitle, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }
