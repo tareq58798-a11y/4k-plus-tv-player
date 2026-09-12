@@ -844,60 +844,110 @@ private fun HomeScreen(
     val continueItem = remember(playlist, continueEntry) {
         continueEntry?.let { entry -> playlist?.items?.firstOrNull { channelKey(it) == entry.itemKey } }
     }
+    val featuredLive = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.LIVE }?.take(8).orEmpty() }
     PremiumBackground {
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        val landscape = maxWidth > maxHeight
-        val sidePadding = if (landscape) 34.dp else 20.dp
-        Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = sidePadding, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                BrandMark(Modifier.weight(1f))
-                IconButton(onClick = onSearch) { Icon(Icons.Default.Search, "Search") }
-                IconButton(onClick = { onMessage("Playlist refreshed") }) { Icon(Icons.Default.Refresh, "Refresh") }
-                IconButton(onClick = onManage) { Icon(Icons.Default.Settings, "Settings") }
-            }
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text("Good evening", fontSize = 30.sp, fontWeight = FontWeight.Black)
-                Text(
-                    playlist?.let { "${it.name} • ${it.items.size} items ready" } ?: "What would you like to watch?",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            AnimatedVisibility(
-                visible = visible,
-                enter = fadeIn(tween(450)) + slideInVertically(tween(450)) {
-                    it / 4
-                }
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val sidePadding = if (maxWidth > maxHeight) 34.dp else 18.dp
+            Column(
+                Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = sidePadding, vertical = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                ContinueCard(item = continueItem) {
-                    if (continueItem != null) onContinueWatching(continueItem, continueEntry?.episodeId)
-                    else onMessage("Nothing to continue yet")
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    BrandMark(Modifier.weight(1f))
+                    IconButton(onClick = onSearch) { Icon(Icons.Default.Search, "Search", tint = Color.White) }
+                    IconButton(onClick = { onMessage("Playlist refreshed") }) { Icon(Icons.Default.Refresh, "Refresh", tint = Color.White) }
+                    IconButton(onClick = onManage) { Icon(Icons.Default.Settings, "Settings", tint = Color.White) }
                 }
-            }
-            if (landscape) {
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.weight(1f), onOpenLive)
-                    HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f), onOpenMovies)
-                    HomeTile("Series", playlist?.let { "${it.seriesCount} series" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f), onOpenSeries)
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Good evening", fontSize = 31.sp, fontWeight = FontWeight.Black)
+                    Text(playlist?.let { "\${it.name} • \${it.items.size} items ready" } ?: "Great stories are always on.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-            } else {
-                HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.fillMaxWidth(), onOpenLive)
-                Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                    HomeTile("Movies", playlist?.let { "${it.movieCount} movies" } ?: "Find something to watch", Icons.Default.Movie, Orange, Modifier.weight(1f), onOpenMovies)
-                    HomeTile("Series", playlist?.let { "${it.seriesCount} series" } ?: "Continue your episodes", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f), onOpenSeries)
+                AnimatedVisibility(visible, enter = fadeIn(tween(450)) + slideInVertically(tween(450)) { it / 4 }) {
+                    ContinueCard(item = continueItem) {
+                        if (continueItem != null) onContinueWatching(continueItem, continueEntry?.episodeId)
+                        else onMessage("Nothing to continue yet")
+                    }
                 }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    CinemaHomeTile("Live TV", playlist?.let { "\${it.liveCount} channels" } ?: "Watch now", Icons.Default.LiveTv, Cyan, Modifier.weight(1f), onOpenLive)
+                    CinemaHomeTile("Movies", playlist?.let { "\${it.movieCount} titles" } ?: "Endless stories", Icons.Default.Movie, Orange, Modifier.weight(1f), onOpenMovies)
+                    CinemaHomeTile("Series", playlist?.let { "\${it.seriesCount} series" } ?: "Binge further", Icons.Default.VideoLibrary, BrandBlue, Modifier.weight(1f), onOpenSeries)
+                }
+                Text("Quick access", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                    CinemaQuickChip(Icons.Default.Favorite, "Favorites") { onMessage("No favorites yet") }
+                    CinemaQuickChip(Icons.Default.History, "Recently watched") { onMessage("No viewing history yet") }
+                    CinemaQuickChip(Icons.Default.PlaylistPlay, "Playlists", onPlaylists)
+                }
+                Text("Categories", fontSize = 19.sp, fontWeight = FontWeight.Bold)
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("All", "News", "Sports", "Entertainment", "Kids").forEachIndexed { index, label ->
+                        FilterChip(selected = index == 0, onClick = onOpenLive, label = { Text(label) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = BrandBlue, selectedLabelColor = Color.White, containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .72f)))
+                    }
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Featured Live TV", fontSize = 19.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                    TextButton(onClick = onOpenLive) { Text("See all", color = Cyan) }
+                }
+                FeaturedLiveRail(featuredLive, onOpenLive)
+                HomeDeviceInfoBar(playlist = playlist)
             }
-            Text("Quick access", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            Row(
-                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                AssistChip(onClick = { onMessage("No favorites yet") }, label = { Text("Favorites") }, leadingIcon = { Icon(Icons.Default.Star, null) })
-                AssistChip(onClick = { onMessage("No viewing history yet") }, label = { Text("Recently watched") }, leadingIcon = { Icon(Icons.Default.History, null) })
-                AssistChip(onClick = onPlaylists, label = { Text("Playlists") }, leadingIcon = { Icon(Icons.Default.PlaylistPlay, null) })
-            }
-            HomeDeviceInfoBar(playlist = playlist)
         }
     }
+}
+
+@Composable
+private fun CinemaHomeTile(title: String, subtitle: String, icon: ImageVector, accent: Color, modifier: Modifier, onClick: () -> Unit) {
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val scale by animateFloatAsState(if (pressed) .965f else 1f, tween(100), label = "cinema_tile_press")
+    val glow by animateFloatAsState(if (pressed) .46f else 0f, tween(150), label = "cinema_tile_glow")
+    val haptic = LocalHapticFeedback.current
+    Surface(
+        modifier = modifier.height(128.dp).graphicsLayer(scaleX = scale, scaleY = scale)
+            .clickable(interactionSource = interaction, indication = LocalIndication.current) { haptic.performHapticFeedback(HapticFeedbackType.LongPress); onClick() },
+        shape = RoundedCornerShape(17.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = .88f),
+        border = BorderStroke(1.dp, accent.copy(alpha = .44f)), shadowElevation = 8.dp
+    ) {
+        Box(Modifier.fillMaxSize().padding(11.dp)) {
+            Box(Modifier.size(48.dp).align(Alignment.TopEnd)
+                .background(Brush.radialGradient(listOf(accent.copy(alpha = glow), Color.Transparent)), RoundedCornerShape(24.dp)))
+            Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.SpaceBetween) {
+                Icon(icon, null, tint = accent, modifier = Modifier.size(29.dp))
+                Column {
+                    Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp, maxLines = 1)
+                    Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, maxLines = 1)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CinemaQuickChip(icon: ImageVector, label: String, onClick: () -> Unit) {
+    AssistChip(onClick = onClick, label = { Text(label) },
+        leadingIcon = { Icon(icon, null, tint = Cyan, modifier = Modifier.size(18.dp)) },
+        colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .80f)))
+}
+
+@Composable
+private fun FeaturedLiveRail(items: List<PlaylistItem>, onOpenLive: () -> Unit) {
+    if (items.isEmpty()) { Text("Your live channels will appear here.", color = MaterialTheme.colorScheme.onSurfaceVariant); return }
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp), contentPadding = PaddingValues(end = 8.dp)) {
+        items(items, key = { channelKey(it) }) { item ->
+            Surface(modifier = Modifier.width(132.dp).then(pressFeedback(onOpenLive)), shape = RoundedCornerShape(13.dp),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = .82f), border = BorderStroke(1.dp, Cyan.copy(alpha = .20f))) {
+                Column(Modifier.padding(7.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                    Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).clip(RoundedCornerShape(9.dp)).background(MaterialTheme.colorScheme.surfaceVariant), contentAlignment = Alignment.Center) {
+                        if (!item.logoUrl.isNullOrBlank()) AsyncImage(item.logoUrl, item.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        else Icon(Icons.Default.LiveTv, null, tint = Cyan)
+                    }
+                    Text(item.name, fontSize = 11.sp, maxLines = 1, fontWeight = FontWeight.SemiBold)
+                    Text("• LIVE", color = Color(0xFFFF5B64), fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
     }
 }
 
