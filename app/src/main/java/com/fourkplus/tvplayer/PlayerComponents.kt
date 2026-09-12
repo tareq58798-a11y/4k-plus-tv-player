@@ -1,6 +1,7 @@
 package com.fourkplus.tvplayer
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.net.Uri
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -23,6 +24,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
@@ -30,6 +32,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -186,6 +189,9 @@ internal fun MoviePlayer(
     var fullscreen by remember(movie) { mutableStateOf(true) }
     var controllerVisible by remember { mutableStateOf(true) }
     var relatedStripExpanded by remember { mutableStateOf(false) }
+    LaunchedEffect(fullscreen) {
+        if (!fullscreen) relatedStripExpanded = false
+    }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(movie) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
@@ -257,8 +263,8 @@ internal fun MoviePlayer(
                         this.player = player
                         installDoubleTapSeek(
                             this, player, skipSeconds,
-                            onSwipeUp = { relatedStripExpanded = true },
-                            onSwipeDown = { relatedStripExpanded = false }
+                            onSwipeUp = if (fullscreen) ({ relatedStripExpanded = true }) else null,
+                            onSwipeDown = if (fullscreen) ({ relatedStripExpanded = false }) else null
                         ) { forward ->
                             seekFeedback = forward to System.nanoTime()
                         }
@@ -270,8 +276,8 @@ internal fun MoviePlayer(
                     applyRequestedAspectRatio(it, videoMode)
                     installDoubleTapSeek(
                         it, player, skipSeconds,
-                        onSwipeUp = { relatedStripExpanded = true },
-                        onSwipeDown = { relatedStripExpanded = false }
+                        onSwipeUp = if (fullscreen) ({ relatedStripExpanded = true }) else null,
+                        onSwipeDown = if (fullscreen) ({ relatedStripExpanded = false }) else null
                     ) { forward ->
                         seekFeedback = forward to System.nanoTime()
                     }
@@ -317,7 +323,7 @@ internal fun MoviePlayer(
                     Text(it, color = Color.White, modifier = Modifier.padding(16.dp))
                 }
             }
-            if (controllerVisible && !relatedStripExpanded && relatedItems.size > 1) {
+            if (fullscreen && controllerVisible && !relatedStripExpanded && relatedItems.size > 1) {
                 Icon(
                     Icons.Default.KeyboardArrowUp,
                     "Swipe up for other episodes",
@@ -325,7 +331,7 @@ internal fun MoviePlayer(
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 8.dp).size(22.dp)
                 )
             }
-            if (relatedStripExpanded && relatedItems.size > 1) {
+            if (fullscreen && relatedStripExpanded && relatedItems.size > 1) {
                 Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 64.dp)) {
                     Text(
                         "Other episodes",
@@ -345,20 +351,8 @@ internal fun MoviePlayer(
     }
     }
     if (fullscreen) {
-        Dialog(
-            onDismissRequest = onExit,
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) {
-            BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
-                val portrait = maxHeight > maxWidth
-                if (!portrait) AllowDrawingUnderCutout()
-                playerContent(
-                    Modifier.fillMaxSize().then(
-                        if (portrait) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier
-                    ),
-                    RectangleShape
-                )
-            }
+        FullscreenPlayerDialog(onDismissRequest = onExit) { bounds ->
+            playerContent(bounds, RectangleShape)
         }
     } else {
         playerContent(modifier.fillMaxWidth(), RoundedCornerShape(18.dp))
@@ -408,17 +402,50 @@ private fun DoubleTapSeekFeedback(
     }
 }
 
-/** Compose Dialogs open their own Window, which doesn't inherit the Activity's
- *  cutout mode, leaving a black bar next to the notch in landscape. */
+/**
+ * Own the player window's bounds, not just the timeline's padding. Portrait lets
+ * Android fit the entire window above system bars; landscape stays edge-to-edge.
+ * Explicit MATCH_PARENT avoids a floating dialog measuring its content taller
+ * than the available window. Insets belong to this dialog, not the host Scaffold.
+ */
 @Composable
-private fun AllowDrawingUnderCutout() {
-    val view = LocalView.current
-    SideEffect {
-        val dialogWindow = (view.parent as? DialogWindowProvider)?.window
-        if (dialogWindow != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            dialogWindow.attributes = dialogWindow.attributes.apply {
-                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+private fun FullscreenPlayerDialog(
+    onDismissRequest: () -> Unit,
+    content: @Composable (Modifier) -> Unit
+) {
+    val portrait = LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = portrait
+        )
+    ) {
+        val view = LocalView.current
+        SideEffect {
+            val window = (view.parent as? DialogWindowProvider)?.window
+            if (window != null) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    window.attributes = window.attributes.apply {
+                        layoutInDisplayCutoutMode = if (portrait) {
+                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
+                        } else {
+                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                        }
+                    }
+                }
+                window.setLayout(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT
+                )
             }
+        }
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            content(
+                Modifier.fillMaxSize()
+                    .then(if (portrait) Modifier.safeDrawingPadding() else Modifier)
+                    .clipToBounds()
+            )
         }
     }
 }
@@ -767,6 +794,10 @@ internal fun LiveChannelPreview(
     var controllerVisible by remember { mutableStateOf(true) }
     var controllerShownAt by remember { mutableLongStateOf(System.nanoTime()) }
     var stripExpanded by remember { mutableStateOf(false) }
+    val suggestionsEnabled = fullscreen || hostedFullscreen
+    LaunchedEffect(suggestionsEnabled) {
+        if (!suggestionsEnabled) stripExpanded = false
+    }
     fun showControllerBriefly() {
         controllerVisible = true
         controllerShownAt = System.nanoTime()
@@ -891,7 +922,8 @@ internal fun LiveChannelPreview(
                                 }
                             )
                         }
-                        .pointerInput(Unit) {
+                        .pointerInput(suggestionsEnabled) {
+                            if (!suggestionsEnabled) return@pointerInput
                             var accumulated = 0f
                             detectVerticalDragGestures(
                                 onDragStart = { accumulated = 0f },
@@ -964,7 +996,7 @@ internal fun LiveChannelPreview(
                         }
                     }
                 }
-                if (controllerVisible && !stripExpanded && channelList.size > 1) {
+                if (suggestionsEnabled && controllerVisible && !stripExpanded && channelList.size > 1) {
                     Icon(
                         Icons.Default.KeyboardArrowUp,
                         "Swipe up for other channels",
@@ -975,7 +1007,7 @@ internal fun LiveChannelPreview(
                             .size(22.dp)
                     )
                 }
-                if (stripExpanded && channelList.size > 1) {
+                if (suggestionsEnabled && stripExpanded && channelList.size > 1) {
                     Column(
                         Modifier.align(Alignment.BottomCenter)
                             .then(if (fullscreen || hostedFullscreen) Modifier.navigationBarsPadding() else Modifier)
@@ -1000,20 +1032,8 @@ internal fun LiveChannelPreview(
     }
     }
     if (fullscreen) {
-        Dialog(
-            onDismissRequest = { fullscreen = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) {
-            BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
-                val portrait = maxHeight > maxWidth
-                if (!portrait) AllowDrawingUnderCutout()
-                playerContent(
-                    Modifier.fillMaxSize().then(
-                        if (portrait) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier
-                    ),
-                    RectangleShape
-                )
-            }
+        FullscreenPlayerDialog(onDismissRequest = { fullscreen = false }) { bounds ->
+            playerContent(bounds, RectangleShape)
         }
     } else {
         playerContent(modifier, RoundedCornerShape(18.dp))
