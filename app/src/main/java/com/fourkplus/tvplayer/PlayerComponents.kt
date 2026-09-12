@@ -349,8 +349,16 @@ internal fun MoviePlayer(
             onDismissRequest = onExit,
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
         ) {
-            AllowDrawingUnderCutout()
-            playerContent(Modifier.fillMaxSize(), RectangleShape)
+            BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
+                val portrait = maxHeight > maxWidth
+                if (!portrait) AllowDrawingUnderCutout()
+                playerContent(
+                    Modifier.fillMaxSize().then(
+                        if (portrait) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier
+                    ),
+                    RectangleShape
+                )
+            }
         }
     } else {
         playerContent(modifier.fillMaxWidth(), RoundedCornerShape(18.dp))
@@ -996,8 +1004,16 @@ internal fun LiveChannelPreview(
             onDismissRequest = { fullscreen = false },
             properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
         ) {
-            AllowDrawingUnderCutout()
-            playerContent(Modifier.fillMaxSize(), RectangleShape)
+            BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
+                val portrait = maxHeight > maxWidth
+                if (!portrait) AllowDrawingUnderCutout()
+                playerContent(
+                    Modifier.fillMaxSize().then(
+                        if (portrait) Modifier.windowInsetsPadding(WindowInsets.safeDrawing) else Modifier
+                    ),
+                    RectangleShape
+                )
+            }
         }
     } else {
         playerContent(modifier, RoundedCornerShape(18.dp))
