@@ -7,35 +7,43 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-val Navy = Color(0xFF071226)
-val DeepBlue = Color(0xFF0A2A57)
-val BrandBlue = Color(0xFF1268F3)
-val Cyan = Color(0xFF16C4F4)
-val Orange = Color(0xFFFFA000)
-val Ice = Color(0xFFF3F8FF)
+val Navy = Color(0xFF06101F)
+val DeepBlue = Color(0xFF0A2B55)
+val BrandBlue = Color(0xFF1499F5)
+val Cyan = Color(0xFF23D7EE)
+val Orange = Color(0xFFFFB547)
+val Ice = Color(0xFFF4F8FF)
 
 private val DarkColors = darkColorScheme(
     primary = BrandBlue,
+    onPrimary = Color.White,
+    primaryContainer = Color(0xFF0C4273),
     secondary = Cyan,
+    onSecondary = Color(0xFF001F26),
+    secondaryContainer = Color(0xFF073D49),
     tertiary = Orange,
     background = Navy,
-    surface = Color(0xFF0D1C34),
-    surfaceVariant = Color(0xFF142844),
-    onPrimary = Color.White,
-    onBackground = Color(0xFFF5F8FF),
-    onSurface = Color(0xFFF5F8FF)
+    onBackground = Color(0xFFF4F8FF),
+    surface = Color(0xFF0A1B31),
+    onSurface = Color(0xFFF4F8FF),
+    surfaceVariant = Color(0xFF12304E),
+    onSurfaceVariant = Color(0xFFB7CAE2)
 )
 
 private val LightColors = lightColorScheme(
-    primary = BrandBlue,
-    secondary = Cyan,
-    tertiary = Orange,
-    background = Ice,
-    surface = Color.White,
-    surfaceVariant = Color(0xFFE7F0FF),
+    primary = Color(0xFF087BD4),
     onPrimary = Color.White,
-    onBackground = Navy,
-    onSurface = Navy
+    primaryContainer = Color(0xFFD8EDFF),
+    secondary = Color(0xFF008D9F),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFC9F5F5),
+    tertiary = Color(0xFFB66D00),
+    background = Ice,
+    onBackground = Color(0xFF0B1A33),
+    surface = Color(0xFFFCFEFF),
+    onSurface = Color(0xFF0B1A33),
+    surfaceVariant = Color(0xFFE1F0FF),
+    onSurfaceVariant = Color(0xFF52657D)
 )
 
 @Composable
