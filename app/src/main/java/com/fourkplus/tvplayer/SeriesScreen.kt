@@ -49,7 +49,9 @@ private enum class SeriesView { BROWSE, CATEGORY, DETAILS, PLAYER }
 internal fun SeriesScreen(
     playlist: LoadedPlaylist?,
     loadDetails: suspend (PlaylistItem) -> Result<SeriesDetailsInfo>,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    resumeRequest: ResumeRequest? = null,
+    onResumeHandled: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val parental = remember { context.getSharedPreferences("parental_settings", Context.MODE_PRIVATE) }
@@ -143,6 +145,11 @@ internal fun SeriesScreen(
             .putStringSet("continue_series", updatedContinue)
             .putString("last_episode_${channelKey(series)}", episode.id)
             .apply()
+        if (normalized > 0L) {
+            com.fourkplus.tvplayer.data.ContinueWatchingStore.record(context, MediaKind.SERIES, channelKey(series), episode.id)
+        } else {
+            com.fourkplus.tvplayer.data.ContinueWatchingStore.clear(context, channelKey(series))
+        }
     }
 
     fun goBack() {
@@ -168,6 +175,35 @@ internal fun SeriesScreen(
                 .onFailure { detailsError = it.message }
             detailsLoading = false
         }
+    }
+
+    LaunchedEffect(resumeRequest, byId) {
+        val request = resumeRequest ?: return@LaunchedEffect
+        val series = byId[request.itemKey]
+        if (series == null) {
+            onResumeHandled()
+            return@LaunchedEffect
+        }
+        selectedSeries = series
+        selectedEpisode = null
+        details = null
+        detailsError = null
+        selectedSeason = store.getInt("last_season_${channelKey(series)}", 1)
+        view = SeriesView.DETAILS
+        if (request.episodeId == null) onResumeHandled()
+    }
+
+    LaunchedEffect(details, resumeRequest) {
+        val request = resumeRequest ?: return@LaunchedEffect
+        val episodeId = request.episodeId ?: return@LaunchedEffect
+        val loadedDetails = details ?: return@LaunchedEffect
+        val series = selectedSeries?.takeIf { channelKey(it) == request.itemKey } ?: return@LaunchedEffect
+        loadedDetails.episodes.firstOrNull { it.id == episodeId }?.let { episode ->
+            selectedEpisode = episode
+            selectedSeason = episode.seasonNumber
+            if (request.autoPlay) view = SeriesView.PLAYER
+        }
+        onResumeHandled()
     }
 
     BoxWithConstraints(

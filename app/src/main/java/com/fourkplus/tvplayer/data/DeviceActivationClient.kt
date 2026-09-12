@@ -13,8 +13,7 @@ import org.json.JSONObject
  *  fetches it here. Deliberately separate from [XtreamProviderClient] since it speaks a different,
  *  first-party API rather than the Xtream Codes provider protocol. */
 internal object DeviceActivationClient {
-    // Filled in once the server in /server is deployed (see server/README or the setup notes).
-    private const val ACTIVATION_URL = "https://REPLACE_WITH_RENDER_URL/api/activate"
+    private const val ACTIVATION_URL = "https://fourk-plus-tv-player.onrender.com/api/activate"
 
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -26,9 +25,6 @@ internal object DeviceActivationClient {
      *  [PlaylistInput.password]. Returns a resolved M3U_URL or PROVIDER_LOGIN input, or throws
      *  if the activation server hasn't had a playlist assigned to this device yet. */
     fun resolve(input: PlaylistInput): PlaylistInput {
-        require(!ACTIVATION_URL.contains("REPLACE_WITH_RENDER_URL")) {
-            "Device activation isn't configured yet."
-        }
         val requestBody = JSONObject()
             .put("mac", input.username)
             .put("deviceKey", input.password)

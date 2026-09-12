@@ -98,12 +98,17 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private enum class Screen { LOADING, ACTIVATION, MANUAL, PLAYLISTS, HOME, LIVE_TV, MOVIES, SERIES, SETTINGS }
+private enum class Screen { LOADING, ACTIVATION, MANUAL, PLAYLISTS, HOME, LIVE_TV, MOVIES, SERIES, SETTINGS, SEARCH }
 internal enum class ThemeChoice { SYSTEM, LIGHT, DARK }
+
+/** A request to jump directly to a specific item in Live TV/Movies/Series, from Home's Continue
+ *  Watching card (autoPlay = true) or from global search (autoPlay = false, opens details first). */
+internal data class ResumeRequest(val itemKey: String, val episodeId: String? = null, val autoPlay: Boolean = false)
 
 @Composable
 private fun App() {
     var screen by remember { mutableStateOf(Screen.LOADING) }
+    var resumeRequest by remember { mutableStateOf<ResumeRequest?>(null) }
     var themeChoice by remember { mutableStateOf(ThemeChoice.SYSTEM) }
     val useDark = when (themeChoice) {
         ThemeChoice.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
@@ -228,22 +233,49 @@ private fun App() {
                     onOpenLive = { screen = Screen.LIVE_TV },
                     onOpenMovies = { screen = Screen.MOVIES },
                     onOpenSeries = { screen = Screen.SERIES },
+                    onSearch = { screen = Screen.SEARCH },
+                    onContinueWatching = { item, episodeId ->
+                        resumeRequest = ResumeRequest(channelKey(item), episodeId, autoPlay = true)
+                        screen = when (item.kind) {
+                            MediaKind.LIVE -> Screen.LIVE_TV
+                            MediaKind.MOVIE -> Screen.MOVIES
+                            MediaKind.SERIES -> Screen.SERIES
+                        }
+                    },
                     onMessage = message
+                )
+                Screen.SEARCH -> GlobalSearchScreen(
+                    playlist = playlistUiState.loadedPlaylist,
+                    onBack = { screen = Screen.HOME },
+                    onSelect = { item ->
+                        resumeRequest = ResumeRequest(channelKey(item), autoPlay = false)
+                        screen = when (item.kind) {
+                            MediaKind.LIVE -> Screen.LIVE_TV
+                            MediaKind.MOVIE -> Screen.MOVIES
+                            MediaKind.SERIES -> Screen.SERIES
+                        }
+                    }
                 )
                 Screen.LIVE_TV -> LiveTvScreen(
                     playlist = playlistUiState.loadedPlaylist,
                     onBack = { screen = Screen.HOME },
-                    onMessage = message
+                    onMessage = message,
+                    resumeRequest = resumeRequest,
+                    onResumeHandled = { resumeRequest = null }
                 )
                 Screen.MOVIES -> MoviesScreen(
                     playlist = playlistUiState.loadedPlaylist,
                     loadDetails = playlistViewModel::movieDetails,
-                    onBack = { screen = Screen.HOME }
+                    onBack = { screen = Screen.HOME },
+                    resumeRequest = resumeRequest,
+                    onResumeHandled = { resumeRequest = null }
                 )
                 Screen.SERIES -> SeriesScreen(
                     playlist = playlistUiState.loadedPlaylist,
                     loadDetails = playlistViewModel::seriesDetails,
-                    onBack = { screen = Screen.HOME }
+                    onBack = { screen = Screen.HOME },
+                    resumeRequest = resumeRequest,
+                    onResumeHandled = { resumeRequest = null }
                 )
                 Screen.SETTINGS -> SettingsScreen(
                     playlist = playlistUiState.loadedPlaylist,
@@ -728,10 +760,17 @@ private fun HomeScreen(
     onOpenLive: () -> Unit,
     onOpenMovies: () -> Unit,
     onOpenSeries: () -> Unit,
+    onSearch: () -> Unit,
+    onContinueWatching: (PlaylistItem, String?) -> Unit,
     onMessage: (String) -> Unit
 ) {
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
+    val context = LocalContext.current
+    val continueEntry = remember(playlist) { com.fourkplus.tvplayer.data.ContinueWatchingStore.read(context) }
+    val continueItem = remember(playlist, continueEntry) {
+        continueEntry?.let { entry -> playlist?.items?.firstOrNull { channelKey(it) == entry.itemKey } }
+    }
     PremiumBackground {
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val landscape = maxWidth > maxHeight
@@ -739,7 +778,7 @@ private fun HomeScreen(
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = sidePadding, vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 BrandMark(Modifier.weight(1f))
-                IconButton(onClick = { onMessage("Add a playlist to start searching") }) { Icon(Icons.Default.Search, "Search") }
+                IconButton(onClick = onSearch) { Icon(Icons.Default.Search, "Search") }
                 IconButton(onClick = { onMessage("Playlist refreshed") }) { Icon(Icons.Default.Refresh, "Refresh") }
                 IconButton(onClick = onManage) { Icon(Icons.Default.Settings, "Settings") }
             }
@@ -752,8 +791,15 @@ private fun HomeScreen(
             }
             AnimatedVisibility(
                 visible = visible,
-                enter = fadeIn(tween(450)) + slideInVertically(tween(450)) { it / 4 }
-            ) { ContinueCard { if ((playlist?.movieCount ?: 0) > 0) onOpenMovies() else onMessage("Nothing to continue yet") } }
+                enter = fadeIn(tween(450)) + slideInVertically(tween(450)) {
+                    it / 4
+                }
+            ) {
+                ContinueCard(item = continueItem) {
+                    if (continueItem != null) onContinueWatching(continueItem, continueEntry?.episodeId)
+                    else onMessage("Nothing to continue yet")
+                }
+            }
             if (landscape) {
                 Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                     HomeTile("Live TV", playlist?.let { "${it.liveCount} channels" } ?: "Browse your channels", Icons.Default.LiveTv, Cyan, Modifier.weight(1f), onOpenLive)
@@ -874,7 +920,9 @@ private enum class MovieView { BROWSE, CATEGORY, DETAILS, PLAYER }
 private fun MoviesScreen(
     playlist: LoadedPlaylist?,
     loadDetails: suspend (PlaylistItem) -> Result<MovieDetailsInfo>,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    resumeRequest: ResumeRequest? = null,
+    onResumeHandled: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val parental = remember { context.getSharedPreferences("parental_settings", android.content.Context.MODE_PRIVATE) }
@@ -912,6 +960,17 @@ private fun MoviesScreen(
             .sortedByDescending { progress[channelKey(it)] ?: 0L }
     }
 
+    LaunchedEffect(resumeRequest, byId) {
+        val request = resumeRequest ?: return@LaunchedEffect
+        byId[request.itemKey]?.let { movie ->
+            selectedMovie = movie
+            details = null
+            detailsError = null
+            view = if (request.autoPlay) MovieView.PLAYER else MovieView.DETAILS
+        }
+        onResumeHandled()
+    }
+
     fun toggleFavorite(movie: PlaylistItem) {
         val id = channelKey(movie)
         val updated = if (id in favoriteIds) favoriteIds - id else favoriteIds + id
@@ -935,6 +994,11 @@ private fun MoviesScreen(
         val normalized = if (duration > 0L && position >= duration - 20_000L) 0L else position.coerceAtLeast(0L)
         progress = if (normalized == 0L) progress - id else progress + (id to normalized)
         store.edit().putLong("progress_$id", normalized).apply()
+        if (normalized > 0L) {
+            com.fourkplus.tvplayer.data.ContinueWatchingStore.record(context, MediaKind.MOVIE, id)
+        } else {
+            com.fourkplus.tvplayer.data.ContinueWatchingStore.clear(context, id)
+        }
     }
     fun goBack() {
         when (view) {
@@ -1637,7 +1701,13 @@ private fun formatPlaybackTime(milliseconds: Long): String {
 private enum class LiveView { BROWSE, CATEGORY, PLAYER }
 
 @Composable
-private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessage: (String) -> Unit) {
+private fun LiveTvScreen(
+    playlist: LoadedPlaylist?,
+    onBack: () -> Unit,
+    onMessage: (String) -> Unit,
+    resumeRequest: ResumeRequest? = null,
+    onResumeHandled: () -> Unit = {}
+) {
     val context = LocalContext.current
     val parental = remember { context.getSharedPreferences("parental_settings", android.content.Context.MODE_PRIVATE) }
     var hiddenCategories by remember {
@@ -1663,6 +1733,14 @@ private fun LiveTvScreen(playlist: LoadedPlaylist?, onBack: () -> Unit, onMessag
         mutableStateOf(store.getString("recent_ids_v3", "").orEmpty().split('\u001F').filter(String::isNotBlank))
     }
     val channelByKey = remember(channels) { channels.associateBy(::channelKey) }
+    LaunchedEffect(resumeRequest, channelByKey) {
+        val request = resumeRequest ?: return@LaunchedEffect
+        channelByKey[request.itemKey]?.let { channel ->
+            previewChannel = channel
+            view = LiveView.PLAYER
+        }
+        onResumeHandled()
+    }
     val recentChannels = remember(channelByKey, recentIds) { recentIds.mapNotNull(channelByKey::get) }
     val favoriteChannels = remember(channels, favoriteIds) { channels.filter { channelKey(it) in favoriteIds } }
     val serverCategories = remember(categories, categoryQuery) {
@@ -2159,7 +2237,7 @@ private fun ColumnScope.EmptyLiveState(message: String) {
 }
 
 @Composable
-private fun ContinueCard(onClick: () -> Unit) {
+private fun ContinueCard(item: PlaylistItem?, onClick: () -> Unit) {
     Card(
         colors = CardDefaults.cardColors(containerColor = Color.Transparent),
         shape = RoundedCornerShape(22.dp),
@@ -2174,13 +2252,112 @@ private fun ContinueCard(onClick: () -> Unit) {
             Box(
                 Modifier.size(52.dp).clip(RoundedCornerShape(18.dp)).background(Color.White.copy(alpha = .14f)),
                 contentAlignment = Alignment.Center
-            ) { Icon(Icons.Default.PlayArrow, null, tint = Orange, modifier = Modifier.size(34.dp)) }
+            ) {
+                if (!item?.logoUrl.isNullOrBlank()) {
+                    AsyncImage(item?.logoUrl, null, Modifier.fillMaxSize().padding(4.dp), contentScale = ContentScale.Fit)
+                } else {
+                    Icon(Icons.Default.PlayArrow, null, tint = Orange, modifier = Modifier.size(34.dp))
+                }
+            }
             Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
                 Text("Continue Watching", color = androidx.compose.ui.graphics.Color.White, fontWeight = FontWeight.Bold)
-                Text("Your recent content will appear here", color = androidx.compose.ui.graphics.Color.White.copy(alpha = .72f))
+                Text(
+                    item?.name ?: "Your recent content will appear here",
+                    color = androidx.compose.ui.graphics.Color.White.copy(alpha = .72f),
+                    maxLines = 1
+                )
             }
             Icon(Icons.Default.ChevronRight, null, tint = androidx.compose.ui.graphics.Color.White)
+        }
+    }
+}
+
+@Composable
+private fun GlobalSearchScreen(
+    playlist: LoadedPlaylist?,
+    onBack: () -> Unit,
+    onSelect: (PlaylistItem) -> Unit
+) {
+    var query by remember { mutableStateOf("") }
+    val results = remember(playlist, query) {
+        if (query.isBlank()) emptyList()
+        else playlist?.items?.filter { it.name.contains(query.trim(), ignoreCase = true) }?.take(200).orEmpty()
+    }
+    val live = remember(results) { results.filter { it.kind == MediaKind.LIVE } }
+    val movies = remember(results) { results.filter { it.kind == MediaKind.MOVIE } }
+    val series = remember(results) { results.filter { it.kind == MediaKind.SERIES } }
+
+    PremiumBackground {
+        Column(
+            Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
+                Text("Search", fontSize = 26.sp, fontWeight = FontWeight.Bold)
+            }
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                placeholder = { Text("Search channels, movies, and series") },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth()
+            )
+            when {
+                query.isBlank() -> Text(
+                    "Start typing to search across your whole playlist.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                results.isEmpty() -> Text(
+                    "No matches for \"$query\".",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                else -> LazyColumn(Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (live.isNotEmpty()) {
+                        item { Text("Live TV", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall) }
+                        items(live, key = { "live_" + channelKey(it) }) { SearchResultRow(it, onSelect) }
+                    }
+                    if (movies.isNotEmpty()) {
+                        item { Text("Movies", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall) }
+                        items(movies, key = { "movie_" + channelKey(it) }) { SearchResultRow(it, onSelect) }
+                    }
+                    if (series.isNotEmpty()) {
+                        item { Text("Series", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleSmall) }
+                        items(series, key = { "series_" + channelKey(it) }) { SearchResultRow(it, onSelect) }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SearchResultRow(item: PlaylistItem, onSelect: (PlaylistItem) -> Unit) {
+    Surface(
+        onClick = { onSelect(item) },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .7f)
+    ) {
+        Row(Modifier.padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier.size(44.dp).clip(RoundedCornerShape(8.dp)).background(Color.White.copy(alpha = .08f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (!item.logoUrl.isNullOrBlank()) {
+                    AsyncImage(item.logoUrl, null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                } else {
+                    Icon(Icons.Default.PlayCircle, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(item.name, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Text(item.group, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+            Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
