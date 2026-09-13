@@ -1423,12 +1423,16 @@ private fun RecentLiveCard(
         }
     }
     Column(
-        Modifier.width(width).then(if (fillHeight) Modifier.fillMaxHeight() else Modifier).then(pressFeedback(onClick)),
+        Modifier.width(width).then(if (fillHeight) Modifier.fillMaxHeight() else Modifier),
         verticalArrangement = Arrangement.spacedBy(7.dp)
     ) {
         Box(
             (if (fillHeight) Modifier.fillMaxWidth().weight(1f) else Modifier.fillMaxWidth().aspectRatio(16f / 10f))
                 .clip(RoundedCornerShape(10.dp))
+                // Focus ring lives on the thumbnail itself now, matching its own 10dp clip,
+                // instead of on the whole card - wrapping the card (image + name label below)
+                // used a mismatched 16dp default radius and visibly didn't hug the image.
+                .then(pressFeedback(onClick, cornerRadius = 10.dp))
         ) {
             val liveFrame = snapshot
             if (liveFrame != null) {
@@ -1455,7 +1459,6 @@ private fun RecentLiveCard(
             }
         }
         Text(item.name, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-        Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFFFF3B3B)))
     }
 }
 
@@ -3693,7 +3696,7 @@ internal fun Modifier.focusableClickable(
 }
 
 @Composable
-private fun pressFeedback(onClick: () -> Unit): Modifier {
+private fun pressFeedback(onClick: () -> Unit, cornerRadius: Dp = 16.dp): Modifier {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val focused by interaction.collectIsFocusedAsState()
@@ -3707,7 +3710,7 @@ private fun pressFeedback(onClick: () -> Unit): Modifier {
         .graphicsLayer(scaleX = scale, scaleY = scale)
         .drawWithContent {
             drawContent()
-            drawContrastRoundRect(focusAlpha, 16.dp)
+            drawContrastRoundRect(focusAlpha, cornerRadius)
         }
         .clickable(interactionSource = interaction, indication = LocalIndication.current) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
