@@ -38,9 +38,10 @@ internal class XtreamProviderClient {
                 val info = root.optJSONObject("info") ?: root
                 val movieData = root.optJSONObject("movie_data")
                 val backdrop = info.optJSONArray("backdrop_path")?.let { array ->
-                    (0 until array.length()).asSequence().map { array.optString(it) }.firstOrNull(String::isNotBlank)
-                } ?: info.optString("backdrop_path").takeIf { it.startsWith("http", true) }
-                val trailer = info.optString("youtube_trailer").takeIf(String::isNotBlank)?.let { value ->
+                    (0 until array.length()).asSequence().map { array.optString(it).trim() }
+                        .firstOrNull { it.isNotBlank() && !it.equals("null", true) }
+                } ?: info.optText("backdrop_path")?.takeIf { it.startsWith("http", true) }
+                val trailer = info.optText("youtube_trailer")?.let { value ->
                     if (value.startsWith("http", true)) value else "https://www.youtube.com/watch?v=$value"
                 }
                 val originalTitle = (
@@ -58,7 +59,7 @@ internal class XtreamProviderClient {
                     director = firstText(info, "director"),
                     backdropUrl = backdrop,
                     posterUrl = firstText(info, "movie_image", "cover_big", "cover")
-                        ?: movieData?.optString("stream_icon")?.takeIf(String::isNotBlank),
+                        ?: movieData?.optText("stream_icon"),
                     trailerUrl = trailer
                 )
             } catch (error: Exception) { lastError = error }
@@ -74,10 +75,10 @@ internal class XtreamProviderClient {
                 val root = JSONObject(download(apiUrl(server, source, "get_series_info") + "&series_id=${encode(seriesId)}"))
                 val info = root.optJSONObject("info") ?: JSONObject()
                 val backdrop = info.optJSONArray("backdrop_path")?.let { array ->
-                    (0 until array.length()).asSequence().map { array.optString(it) }
-                        .firstOrNull(String::isNotBlank)
-                } ?: info.optString("backdrop_path").takeIf { it.startsWith("http", true) }
-                val trailer = info.optString("youtube_trailer").takeIf(String::isNotBlank)?.let { value ->
+                    (0 until array.length()).asSequence().map { array.optString(it).trim() }
+                        .firstOrNull { it.isNotBlank() && !it.equals("null", true) }
+                } ?: info.optText("backdrop_path")?.takeIf { it.startsWith("http", true) }
+                val trailer = info.optText("youtube_trailer")?.let { value ->
                     if (value.startsWith("http", true)) value else "https://www.youtube.com/watch?v=$value"
                 }
                 val episodesObject = root.optJSONObject("episodes") ?: JSONObject()
@@ -92,7 +93,7 @@ internal class XtreamProviderClient {
                             val id = episode.optString("id")
                             if (id.isBlank()) continue
                             val episodeInfo = episode.optJSONObject("info") ?: JSONObject()
-                            val extension = episode.optString("container_extension", "mp4").ifBlank { "mp4" }
+                            val extension = episode.optText("container_extension") ?: "mp4"
                             val episodeNumber = episode.optInt("episode_num", index + 1)
                             add(
                                 SeriesEpisode(
@@ -232,7 +233,7 @@ internal class XtreamProviderClient {
                 item.optString("name", "Unnamed channel"),
                 "$server/live/${encode(input.username)}/${encode(input.password)}/$id.ts",
                 groups[item.optString("category_id")] ?: "Other",
-                item.optString("stream_icon").takeIf(String::isNotBlank),
+                item.optText("stream_icon"),
                 // stream_id is the provider's unique channel identity. EPG IDs
                 // may be blank or shared by several streams and must not be
                 // used for favorites or viewing history.
@@ -247,17 +248,16 @@ internal class XtreamProviderClient {
             val item = array.optJSONObject(index) ?: continue
             val id = item.optString("stream_id")
             if (id.isBlank()) continue
-            val extension = item.optString("container_extension", "mp4").ifBlank { "mp4" }
+            val extension = item.optText("container_extension") ?: "mp4"
             add(PlaylistItem(
                 item.optString("name", "Unnamed movie"),
                 "$server/movie/${encode(input.username)}/${encode(input.password)}/$id.$extension",
                 groups[item.optString("category_id")] ?: "Other",
-                item.optString("stream_icon").takeIf(String::isNotBlank), id, MediaKind.MOVIE,
-                description = item.optString("plot").takeIf(String::isNotBlank),
-                year = item.optString("year").takeIf(String::isNotBlank)
-                    ?: item.optString("releaseDate").take(4).takeIf(String::isNotBlank),
-                rating = item.optString("rating").takeIf(String::isNotBlank),
-                duration = item.optString("duration").takeIf(String::isNotBlank)
+                item.optText("stream_icon"), id, MediaKind.MOVIE,
+                description = item.optText("plot"),
+                year = item.optText("year") ?: item.optText("releaseDate")?.take(4),
+                rating = item.optText("rating"),
+                duration = item.optText("duration")
             ))
         }
     }
@@ -270,7 +270,7 @@ internal class XtreamProviderClient {
             add(PlaylistItem(
                 item.optString("name", "Unnamed series"), "series://$id",
                 groups[item.optString("category_id")] ?: "Other",
-                item.optString("cover").takeIf(String::isNotBlank), id, MediaKind.SERIES
+                item.optText("cover"), id, MediaKind.SERIES
             ))
         }
     }
@@ -284,6 +284,13 @@ internal class XtreamProviderClient {
     private fun firstText(objectValue: JSONObject, vararg keys: String): String? =
         keys.asSequence().map { objectValue.optString(it).trim() }
             .firstOrNull { it.isNotBlank() && !it.equals("null", true) }
+
+    // org.json's optString() returns the literal string "null" (not a real null) when the JSON
+    // value itself is null - a common way panels mark "no icon/plot/etc. for this item". Every
+    // optString() read of provider data must be filtered through this (or firstText, its
+    // multi-key sibling) instead of a plain isNotBlank() check, or a null poster/backdrop/plot
+    // field silently becomes the four-character string "null" instead of Kotlin null.
+    private fun JSONObject.optText(key: String): String? = firstText(this, key)
 
     private fun containsLatinText(value: String): Boolean = value.any { it in 'A'..'Z' || it in 'a'..'z' }
 
