@@ -26,6 +26,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
@@ -2011,14 +2012,30 @@ private fun LandscapeLiveBrowser(
                     LazyColumn(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     items(searchedChannels) { channel ->
                         val selected = channelKey(channel) == selectedChannel?.let(::channelKey)
-                        // A remote has no "double-tap": long-press (holding Select) reaches the
-                        // same fullscreen-expand action a touch double-tap does.
+                        // combinedClickable reports remote OK presses as individual clicks.
+                        // Pair activations on this row so double-OK also opens fullscreen.
+                        var lastActivationAt by remember(channelKey(channel)) { mutableLongStateOf(0L) }
+                        val openFullscreen: () -> Unit = {
+                            lastActivationAt = 0L
+                            onChannelFullscreen(channel)
+                            onExpandFullscreen()
+                        }
                         Surface(
-                            modifier = Modifier.fillMaxWidth().focusableClickable(
-                                cornerRadius = 9.dp,
-                                onLongClick = { onChannelFullscreen(channel); onExpandFullscreen() },
-                                onDoubleClick = { onChannelFullscreen(channel); onExpandFullscreen() }
-                            ) { onChannel(channel) },
+                            modifier = Modifier.fillMaxWidth()
+                                .onFocusChanged { if (!it.isFocused) lastActivationAt = 0L }
+                                .focusableClickable(
+                                    cornerRadius = 9.dp,
+                                    onLongClick = openFullscreen,
+                                    onDoubleClick = openFullscreen
+                                ) {
+                                    val now = android.os.SystemClock.uptimeMillis()
+                                    if (lastActivationAt != 0L && now - lastActivationAt <= 500L) {
+                                        openFullscreen()
+                                    } else {
+                                        lastActivationAt = now
+                                        onChannel(channel)
+                                    }
+                                },
                             shape = RoundedCornerShape(9.dp),
                             color = if (selected) Cyan.copy(alpha = .32f) else Color.Transparent
                         ) {
