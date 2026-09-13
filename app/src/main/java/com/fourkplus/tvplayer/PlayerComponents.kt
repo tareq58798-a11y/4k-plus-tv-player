@@ -929,6 +929,7 @@ internal fun LiveChannelPreview(
     hostedFullscreen: Boolean = false,
     onFullscreenDoubleTap: (() -> Unit)? = null,
     onRequestFullscreen: (() -> Unit)? = null,
+    onExitFullscreen: (() -> Unit)? = null,
     showFullscreenButton: Boolean? = null,
     // Hoisted so a caller that also owns a fullscreen-exit BackHandler (Live TV) can resolve
     // "hide controls" vs "exit fullscreen" as a single decision in one place — two separate
@@ -1137,7 +1138,13 @@ internal fun LiveChannelPreview(
                                 if (!hostedFullscreen && controllerVisible) return@onKeyEvent false
                                 when (keyEvent.key) {
                                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
-                                        if (hostedFullscreen) false else { showControllerBriefly(); true }
+                                        // Live TV's TV fullscreen has no controls to bring up with
+                                        // OK, so here OK instead exits back to the categories and
+                                        // channel list - Back already does this, this just gives
+                                        // OK the same result since it's the more natural button.
+                                        if (hostedFullscreen) {
+                                            if (onExitFullscreen != null) { onExitFullscreen(); true } else false
+                                        } else { showControllerBriefly(); true }
                                     }
                                     Key.DirectionDown -> {
                                         if (channelList.size > 1) { stripExpanded = true; true } else false

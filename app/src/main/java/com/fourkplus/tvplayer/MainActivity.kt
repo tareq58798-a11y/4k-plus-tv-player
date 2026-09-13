@@ -2718,7 +2718,8 @@ private fun LiveTvScreen(
                         autoAdvanceOnFailure = true,
                         hostedFullscreen = immersiveFullscreen,
                         onFullscreenDoubleTap = if (immersiveFullscreen) ({ immersiveFullscreen = false }) else null,
-                        onRequestFullscreen = if (!immersiveFullscreen) (::enterFullscreen) else null
+                        onRequestFullscreen = if (!immersiveFullscreen) (::enterFullscreen) else null,
+                        onExitFullscreen = if (immersiveFullscreen) ({ immersiveFullscreen = false }) else null
                     )
                     if (!immersiveFullscreen) {
                         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .36f)))
