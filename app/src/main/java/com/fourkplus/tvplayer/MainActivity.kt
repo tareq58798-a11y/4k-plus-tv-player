@@ -1934,6 +1934,10 @@ private fun LandscapeLiveBrowser(
     val searchedCategories = remember(categories, categorySearch) {
         if (categorySearch.isBlank()) categories else categories.filter { it.contains(categorySearch.trim(), true) }
     }
+    val context = LocalContext.current
+    val isTv = remember { context.isTvDevice() }
+    val recentCategoryFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(isTv) { if (isTv) runCatching { recentCategoryFocusRequester.requestFocus() } }
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         LiveChannelPreview(
             channel = selectedChannel,
@@ -1974,7 +1978,9 @@ private fun LandscapeLiveBrowser(
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         items(searchedCategories) { category ->
                             Surface(
-                                modifier = Modifier.fillMaxWidth().focusableClickable(cornerRadius = 9.dp) { onCategory(category) },
+                                modifier = Modifier.fillMaxWidth()
+                                    .then(if (category == "Recently watched") Modifier.focusRequester(recentCategoryFocusRequester) else Modifier)
+                                    .focusableClickable(cornerRadius = 9.dp) { onCategory(category) },
                                 shape = RoundedCornerShape(9.dp),
                                 color = if (category == selectedCategory) Orange.copy(alpha = .88f) else Color.Transparent
                             ) {
@@ -2376,7 +2382,7 @@ private fun LiveTvScreen(
     val recentlyWatched = "Recently watched"
     val favorites = "Favorites"
     var view by remember { mutableStateOf(LiveView.BROWSE) }
-    var selectedCategory by remember(playlist) { mutableStateOf(categories.firstOrNull().orEmpty()) }
+    var selectedCategory by remember(playlist) { mutableStateOf(recentlyWatched) }
     var categoryQuery by remember { mutableStateOf("") }
     var channelQuery by remember { mutableStateOf("") }
     var showRecentInPlayer by remember { mutableStateOf(false) }
