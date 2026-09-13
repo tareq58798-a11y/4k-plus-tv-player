@@ -1,6 +1,7 @@
 package com.fourkplus.tvplayer
 
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.net.Uri
 import android.view.TextureView
@@ -26,6 +27,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
@@ -33,6 +35,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -261,6 +264,11 @@ internal fun MoviePlayer(
     }
     var controllerVisible by remember { mutableStateOf(true) }
     var relatedStripExpanded by remember { mutableStateOf(false) }
+    // Portrait boxes the video to 16:9 with the episode switcher below it instead of overlaid on
+    // top of it (see the dispatch at the end of this function) — skipped while in a
+    // picture-in-picture window, which is always shown as a plain edge-to-edge rectangle.
+    val portraitLayout = LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE &&
+        !PictureInPictureCoordinator.active
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(movie) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
@@ -351,7 +359,9 @@ internal fun MoviePlayer(
                     ) { forward ->
                         seekFeedback = forward to System.nanoTime()
                     }
-                }, modifier = Modifier.fillMaxSize().navigationBarsPadding()
+                // The portrait layout already insets the whole player via safeDrawingPadding
+                // below; landscape stays edge-to-edge and needs this to clear the nav bar itself.
+                }, modifier = Modifier.fillMaxSize().then(if (portraitLayout) Modifier else Modifier.navigationBarsPadding())
             )
             seekFeedback?.let { feedback ->
                 DoubleTapSeekFeedback(
@@ -393,7 +403,9 @@ internal fun MoviePlayer(
                     Text(it, color = Color.White, modifier = Modifier.padding(16.dp))
                 }
             }
-            if (controllerVisible && !relatedStripExpanded && relatedItems.size > 1 && !PictureInPictureCoordinator.active) {
+            // In portrait the equivalent hint/strip is shown below the boxed video instead (see
+            // the render dispatch at the end of this function), not overlaid on top of it.
+            if (controllerVisible && !relatedStripExpanded && relatedItems.size > 1 && !PictureInPictureCoordinator.active && !portraitLayout) {
                 Icon(
                     Icons.Default.KeyboardArrowUp,
                     "Swipe up for other episodes",
@@ -401,7 +413,7 @@ internal fun MoviePlayer(
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 8.dp).size(22.dp)
                 )
             }
-            if (relatedStripExpanded && relatedItems.size > 1 && !PictureInPictureCoordinator.active) {
+            if (relatedStripExpanded && relatedItems.size > 1 && !PictureInPictureCoordinator.active && !portraitLayout) {
                 Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 64.dp)) {
                     Text(
                         "Other episodes",
@@ -422,8 +434,43 @@ internal fun MoviePlayer(
     }
     // Rendered directly in the Activity's own content (not a Dialog, which opens a separate
     // Android window) so entering picture-in-picture — which resizes the Activity's window —
-    // actually carries the video into the floating window instead of leaving it blank.
-    playerContent(modifier.fillMaxSize(), RectangleShape)
+    // actually carries the video into the floating window instead of leaving it blank. Portrait
+    // still gets its own boxed-16:9-plus-suggestions layout, just inline rather than in a dialog.
+    if (portraitLayout) {
+        Column(
+            modifier = modifier.fillMaxSize().safeDrawingPadding().padding(horizontal = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            playerContent(Modifier.fillMaxWidth().aspectRatio(16f / 9f), RectangleShape)
+            if (relatedItems.size > 1) {
+                if (relatedStripExpanded) {
+                    Text(
+                        "Other episodes",
+                        color = Color.White.copy(alpha = .75f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 10.dp, bottom = 2.dp)
+                    )
+                    RelatedItemsStrip(
+                        items = relatedItems,
+                        currentKey = channelKey(movie),
+                        onSelect = onRelatedItemChange,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                } else if (controllerVisible) {
+                    Icon(
+                        Icons.Default.KeyboardArrowUp,
+                        "Swipe up for other episodes",
+                        tint = Color.White.copy(alpha = .6f),
+                        modifier = Modifier.padding(top = 8.dp).size(22.dp)
+                    )
+                }
+            }
+        }
+    } else {
+        playerContent(modifier.fillMaxSize(), RectangleShape)
+    }
 }
 
 @Composable
@@ -469,17 +516,51 @@ private fun DoubleTapSeekFeedback(
     }
 }
 
-/** Compose Dialogs open their own Window, which doesn't inherit the Activity's
- *  cutout mode, leaving a black bar next to the notch in landscape. */
+/**
+ * Own the player window's bounds, not just the timeline's padding. Portrait lets
+ * Android fit the entire window above system bars; landscape stays edge-to-edge.
+ * Explicit MATCH_PARENT avoids a floating dialog measuring its content taller
+ * than the available window. Insets belong to this dialog, not the host Scaffold.
+ */
 @Composable
-private fun AllowDrawingUnderCutout() {
-    val view = LocalView.current
-    SideEffect {
-        val dialogWindow = (view.parent as? DialogWindowProvider)?.window
-        if (dialogWindow != null && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            dialogWindow.attributes = dialogWindow.attributes.apply {
-                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+private fun FullscreenPlayerDialog(
+    onDismissRequest: () -> Unit,
+    content: @Composable (Modifier, Boolean) -> Unit
+) {
+    val portrait = LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = portrait
+        )
+    ) {
+        val view = LocalView.current
+        SideEffect {
+            val window = (view.parent as? DialogWindowProvider)?.window
+            if (window != null) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                    window.attributes = window.attributes.apply {
+                        layoutInDisplayCutoutMode = if (portrait) {
+                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
+                        } else {
+                            WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                        }
+                    }
+                }
+                window.setLayout(
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT
+                )
             }
+        }
+        Box(Modifier.fillMaxSize().background(Color.Black)) {
+            content(
+                Modifier.fillMaxSize()
+                    .then(if (portrait) Modifier.safeDrawingPadding() else Modifier)
+                    .clipToBounds(),
+                portrait
+            )
         }
     }
 }
@@ -829,6 +910,13 @@ internal fun LiveChannelPreview(
     var controllerVisible by remember { mutableStateOf(true) }
     var controllerShownAt by remember { mutableLongStateOf(System.nanoTime()) }
     var stripExpanded by remember { mutableStateOf(false) }
+    // Embedded previews must stay clean — suggestions are a fullscreen-only control. Unlike
+    // MoviePlayer's portrait boxing, Live TV's hostedFullscreen (the single immersive block that
+    // now covers both orientations) is always genuinely fullscreen, so no portrait exclusion here.
+    val suggestionsEnabled = fullscreen || hostedFullscreen
+    LaunchedEffect(suggestionsEnabled) {
+        if (!suggestionsEnabled) stripExpanded = false
+    }
     fun showControllerBriefly() {
         controllerVisible = true
         controllerShownAt = System.nanoTime()
@@ -968,7 +1056,8 @@ internal fun LiveChannelPreview(
                                 }
                             )
                         }
-                        .pointerInput(Unit) {
+                        .pointerInput(suggestionsEnabled) {
+                            if (!suggestionsEnabled) return@pointerInput
                             var accumulated = 0f
                             detectVerticalDragGestures(
                                 onDragStart = { accumulated = 0f },
@@ -1079,7 +1168,7 @@ internal fun LiveChannelPreview(
                         }
                     }
                 }
-                if (controllerVisible && !stripExpanded && channelList.size > 1 && !PictureInPictureCoordinator.active) {
+                if (suggestionsEnabled && controllerVisible && !stripExpanded && channelList.size > 1 && !PictureInPictureCoordinator.active) {
                     Icon(
                         Icons.Default.KeyboardArrowUp,
                         "Swipe up for other channels",
@@ -1090,7 +1179,7 @@ internal fun LiveChannelPreview(
                             .size(22.dp)
                     )
                 }
-                if (stripExpanded && channelList.size > 1 && !PictureInPictureCoordinator.active) {
+                if (suggestionsEnabled && stripExpanded && channelList.size > 1 && !PictureInPictureCoordinator.active) {
                     Column(
                         Modifier.align(Alignment.BottomCenter)
                             .then(if (fullscreen || hostedFullscreen) Modifier.navigationBarsPadding() else Modifier)
@@ -1115,12 +1204,42 @@ internal fun LiveChannelPreview(
     }
     }
     if (fullscreen) {
-        Dialog(
-            onDismissRequest = { fullscreen = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) {
-            AllowDrawingUnderCutout()
-            playerContent(Modifier.fillMaxSize(), RectangleShape)
+        FullscreenPlayerDialog(onDismissRequest = { fullscreen = false }) { bounds, isPortrait ->
+            if (isPortrait) {
+                Column(
+                    modifier = bounds.padding(horizontal = 12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    playerContent(Modifier.fillMaxWidth().aspectRatio(16f / 9f), RectangleShape)
+                    if (channelList.size > 1) {
+                        if (stripExpanded) {
+                            Text(
+                                "More in this category",
+                                color = Color.White.copy(alpha = .75f),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 10.dp, bottom = 2.dp)
+                            )
+                            RelatedItemsStrip(
+                                items = channelList,
+                                currentKey = channel?.let(::channelKey).orEmpty(),
+                                onSelect = onChannelChange,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        } else if (controllerVisible) {
+                            Icon(
+                                Icons.Default.KeyboardArrowUp,
+                                "Swipe up for other channels",
+                                tint = Color.White.copy(alpha = .6f),
+                                modifier = Modifier.padding(top = 8.dp).size(22.dp)
+                            )
+                        }
+                    }
+                }
+            } else {
+                playerContent(bounds, RectangleShape)
+            }
         }
     } else {
         playerContent(modifier, RoundedCornerShape(18.dp))

@@ -229,6 +229,7 @@ private fun App() {
         else pendingPinAction = action
     }
     val startupGateActive = parentalEnabled && askPinOnStartup && pinHash != null && !parentalUnlockedThisSession
+    var showRotateHint by remember { mutableStateOf(false) }
     val playlistViewModel: PlaylistViewModel = viewModel(factory = PlaylistViewModel.Factory(context.applicationContext))
     val playlistUiState by playlistViewModel.uiState.collectAsStateWithLifecycle()
     val message: (String) -> Unit = { scope.launch { snackbar.showSnackbar(it) } }
@@ -260,6 +261,15 @@ private fun App() {
         themeChoice = runCatching {
             ThemeChoice.valueOf(appPreferences.getString("theme", ThemeChoice.SYSTEM.name).orEmpty())
         }.getOrDefault(ThemeChoice.SYSTEM)
+    }
+
+    LaunchedEffect(screen, playlistUiState.bootstrapping) {
+        if (screen == Screen.HOME && !playlistUiState.bootstrapping &&
+            !appPreferences.getBoolean("rotate_hint_seen", false)
+        ) {
+            delay(700)
+            showRotateHint = true
+        }
     }
 
     // Drives the initial LOADING -> ACTIVATION | HOME transition once the ViewModel's bootstrap
@@ -515,6 +525,14 @@ private fun App() {
                     onSuccess = { parentalUnlockedThisSession = true }
                 )
             }
+            if (showRotateHint) {
+                RotateExperienceHint(
+                    onDismiss = {
+                        appPreferences.edit().putBoolean("rotate_hint_seen", true).apply()
+                        showRotateHint = false
+                    }
+                )
+            }
             }
         }
         }
@@ -593,12 +611,93 @@ private fun SunRays(modifier: Modifier) {
     }
 }
 
+@Composable
+private fun RotateExperienceHint(onDismiss: () -> Unit) {
+    var animateRotation by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(260)
+        animateRotation = true
+    }
+    val rotation by animateFloatAsState(
+        targetValue = if (animateRotation) 90f else 0f,
+        animationSpec = tween(760),
+        label = "rotate_hint"
+    )
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Surface(
+            modifier = Modifier.padding(28.dp).then(pressFeedback(onDismiss)),
+            shape = RoundedCornerShape(28.dp),
+            color = MaterialTheme.colorScheme.surface.copy(alpha = .96f),
+            shadowElevation = 18.dp
+        ) {
+            Column(
+                Modifier.padding(horizontal = 26.dp, vertical = 22.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    Icons.Default.ScreenRotation,
+                    contentDescription = null,
+                    tint = Cyan,
+                    modifier = Modifier.size(44.dp).graphicsLayer { rotationZ = rotation }
+                )
+                Text("Two ways to enjoy 4K Plus TV", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                Text(
+                    "Browse in portrait. Rotate your phone for the wide-screen viewing experience.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                    textAlign = TextAlign.Center
+                )
+                Text("Tap to continue", color = Cyan, style = MaterialTheme.typography.labelMedium)
+            }
+        }
+    }
+}
+
 /** The themed backdrop is painted once, full-bleed, behind the Scaffold in [App]. This stays as the
  *  screens' BoxScope container (they position content with `align`) and deliberately paints nothing:
  *  drawing the artwork again here would show a second, differently-cropped copy. */
 @Composable
 private fun PremiumBackground(content: @Composable BoxScope.() -> Unit) {
-    Box(Modifier.fillMaxSize(), content = content)
+    val light = MaterialTheme.colorScheme.background.red > .7f
+    Box(
+        Modifier.fillMaxSize().background(
+            Brush.verticalGradient(
+                listOf(
+                    MaterialTheme.colorScheme.background,
+                    MaterialTheme.colorScheme.background,
+                    if (light) Color(0xFFE7F5FF) else Color(0xFF061A32)
+                )
+            )
+        )
+    ) {
+        // Light mode: controlled sunlight; dark mode: a quiet aurora—both stay behind content.
+        Box(
+            Modifier.size(360.dp).align(Alignment.TopEnd)
+                .background(
+                    Brush.radialGradient(
+                        listOf(
+                            if (light) Color(0xFFFFD887).copy(alpha = .26f) else Cyan.copy(alpha = .18f),
+                            Color.Transparent
+                        )
+                    ),
+                    RoundedCornerShape(180.dp)
+                )
+        )
+        Box(
+            Modifier.size(300.dp).align(Alignment.BottomStart)
+                .background(
+                    Brush.radialGradient(
+                        listOf(
+                            if (light) Color(0xFF7AD7FF).copy(alpha = .18f) else Color(0xFF9B7CFF).copy(alpha = .13f),
+                            Color.Transparent
+                        )
+                    ),
+                    RoundedCornerShape(150.dp)
+                )
+        )
+        content()
+    }
 }
 
 @Composable
