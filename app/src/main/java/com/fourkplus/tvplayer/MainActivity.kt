@@ -78,7 +78,9 @@ import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -86,6 +88,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.TextUnit
@@ -267,8 +270,11 @@ private fun App() {
         }.getOrDefault(ThemeChoice.SYSTEM)
     }
 
+    // Meaningless on TV: there's no touch screen to rotate and the device is permanently
+    // landscape, so a hint about portrait/landscape differences would just be confusing.
+    val isTvApp = remember { context.isTvDevice() }
     LaunchedEffect(screen, playlistUiState.bootstrapping) {
-        if (screen == Screen.HOME && !playlistUiState.bootstrapping &&
+        if (!isTvApp && screen == Screen.HOME && !playlistUiState.bootstrapping &&
             !appPreferences.getBoolean("rotate_hint_seen", false)
         ) {
             delay(700)
@@ -664,17 +670,11 @@ private fun RotateExperienceHint(onDismiss: () -> Unit) {
 @Composable
 private fun PremiumBackground(content: @Composable BoxScope.() -> Unit) {
     val light = MaterialTheme.colorScheme.background.red > .7f
-    Box(
-        Modifier.fillMaxSize().background(
-            Brush.verticalGradient(
-                listOf(
-                    MaterialTheme.colorScheme.background,
-                    MaterialTheme.colorScheme.background,
-                    if (light) Color(0xFFE7F5FF) else Color(0xFF061A32)
-                )
-            )
-        )
-    ) {
+    // No background() here: the aurora/sky artwork is already painted full-bleed behind the
+    // Scaffold in App(). This used to also paint an opaque gradient of its own, which fully
+    // hid that artwork behind every screen that uses this wrapper (i.e. nearly all of them) —
+    // only the two glow blobs below are this composable's own contribution.
+    Box(Modifier.fillMaxSize()) {
         // Light mode: controlled sunlight; dark mode: a quiet aurora—both stay behind content.
         Box(
             Modifier.size(360.dp).align(Alignment.TopEnd)
@@ -1865,12 +1865,16 @@ private fun LandscapeMovieBrowser(
         else -> movies.filter { it.group == selectedCategory }
     }
     val displayed = if (search.isBlank()) base else movies.filter { it.name.contains(search.trim(), true) }
+    val context = LocalContext.current
+    val isTv = remember { context.isTvDevice() }
+    val continueWatchingFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(isTv) { if (isTv) runCatching { continueWatchingFocusRequester.requestFocus() } }
     Row(
-        Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 8.dp),
+        Modifier.fillMaxSize().padding(horizontal = if (isTv) 40.dp else 18.dp, vertical = if (isTv) 22.dp else 8.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Surface(
-            Modifier.width(205.dp).fillMaxHeight(),
+            Modifier.width(240.dp).fillMaxHeight(),
             shape = RoundedCornerShape(15.dp),
             color = Color.Black.copy(alpha = .34f),
             border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))
@@ -1885,12 +1889,13 @@ private fun LandscapeMovieBrowser(
                     items(allCategories) { category ->
                         Surface(
                             onClick = { onCategory(category) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth()
+                                .then(if (category == "Continue watching") Modifier.focusRequester(continueWatchingFocusRequester) else Modifier),
                             shape = RoundedCornerShape(11.dp),
                             color = if (category == selectedCategory) Cyan.copy(alpha = .24f) else Color.Transparent
                         ) {
                             Row(Modifier.padding(start = 12.dp, top = 7.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(localizedSectionTitle(category), Modifier.weight(1f), maxLines = 1, fontWeight = if (category == selectedCategory) FontWeight.Bold else FontWeight.Normal)
+                                Text(localizedSectionTitle(category), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, fontWeight = if (category == selectedCategory) FontWeight.Bold else FontWeight.Normal)
                                 if (category !in special) {
                                     AnimatedIconButton(onClick = { onHide(category) }, modifier = Modifier.size(32.dp)) {
                                         Icon(Icons.Default.VisibilityOff, stringResource(R.string.cd_hide_category, category), modifier = Modifier.size(18.dp))
@@ -1917,10 +1922,10 @@ private fun LandscapeLiveBrowser(
     channels: List<PlaylistItem>,
     selectedChannel: PlaylistItem?,
     favoriteIds: Set<String>,
+    returningFromFullscreen: Boolean,
     onCategory: (String) -> Unit,
     onChannel: (PlaylistItem) -> Unit,
     onChannelFullscreen: (PlaylistItem) -> Unit,
-    onExpandFullscreen: () -> Unit,
     onFavorite: (PlaylistItem) -> Unit,
     onHide: (String) -> Unit,
     onBack: () -> Unit,
@@ -1937,23 +1942,30 @@ private fun LandscapeLiveBrowser(
     val context = LocalContext.current
     val isTv = remember { context.isTvDevice() }
     val recentCategoryFocusRequester = remember { FocusRequester() }
-    LaunchedEffect(isTv) { if (isTv) runCatching { recentCategoryFocusRequester.requestFocus() } }
-    Box(Modifier.fillMaxSize().background(Color.Black)) {
-        LiveChannelPreview(
-            channel = selectedChannel,
-            modifier = Modifier.fillMaxSize(),
-            channelList = channels,
-            onChannelChange = onChannel,
-            autoAdvanceOnFailure = selectedChannel == channels.firstOrNull(),
-            onRequestFullscreen = onExpandFullscreen
-        )
-        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .36f)))
+    val selectedChannelFocusRequester = remember { FocusRequester() }
+    // On first ever open, land the remote's focus on the Recently watched category; after
+    // returning from fullscreen, land it back on the channel that was just playing instead.
+    LaunchedEffect(isTv) {
+        if (!isTv) return@LaunchedEffect
+        runCatching {
+            if (returningFromFullscreen) selectedChannelFocusRequester.requestFocus()
+            else recentCategoryFocusRequester.requestFocus()
+        }
+    }
+    // Pressing OK on a category should move the remote's focus straight into that category's
+    // channel list rather than leaving it sitting on the category button — 0 means "not from a
+    // press yet" (the initial LaunchedEffect above owns focus at that point).
+    var categorySelectionTick by remember { mutableIntStateOf(0) }
+    val firstChannelFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(categorySelectionTick) {
+        if (categorySelectionTick > 0 && isTv) runCatching { firstChannelFocusRequester.requestFocus() }
+    }
         Row(
             Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Surface(
-                Modifier.width(210.dp).fillMaxHeight(),
+                Modifier.width(240.dp).fillMaxHeight(),
                 shape = RoundedCornerShape(16.dp),
                 color = Color.Black.copy(alpha = .62f)
             ) {
@@ -1962,17 +1974,10 @@ private fun LandscapeLiveBrowser(
                         AnimatedIconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, stringResource(R.string.cd_back), tint = Color.White) }
                         Text(stringResource(R.string.nav_live_tv), color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Black)
                     }
-                    OutlinedTextField(
+                    DarkTvSearchField(
                         value = categorySearch,
                         onValueChange = { categorySearch = it },
-                        placeholder = { Text(stringResource(R.string.search_categories), color = Color.White.copy(alpha = .55f), fontSize = 13.sp) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White, unfocusedTextColor = Color.White,
-                            focusedBorderColor = Cyan, unfocusedBorderColor = Color.White.copy(alpha = .3f),
-                            cursorColor = Cyan
-                        ),
-                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 13.sp),
+                        placeholder = stringResource(R.string.search_categories),
                         modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)
                     )
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -1980,12 +1985,15 @@ private fun LandscapeLiveBrowser(
                             Surface(
                                 modifier = Modifier.fillMaxWidth()
                                     .then(if (category == "Recently watched") Modifier.focusRequester(recentCategoryFocusRequester) else Modifier)
-                                    .focusableClickable(cornerRadius = 9.dp) { onCategory(category) },
+                                    .focusableClickable(cornerRadius = 9.dp) {
+                                        categorySelectionTick++
+                                        onCategory(category)
+                                    },
                                 shape = RoundedCornerShape(9.dp),
                                 color = if (category == selectedCategory) Orange.copy(alpha = .88f) else Color.Transparent
                             ) {
                                 Row(Modifier.padding(start = 11.dp, top = 5.dp, bottom = 5.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(localizedSectionTitle(category), Modifier.weight(1f), color = Color.White, maxLines = 1)
+                                    Text(localizedSectionTitle(category), Modifier.weight(1f), color = Color.White, maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp)
                                     if (category !in setOf("Recently watched", "Favorites")) {
                                         AnimatedIconButton(onClick = { onHide(category) }, modifier = Modifier.size(30.dp)) {
                                             Icon(Icons.Default.VisibilityOff, stringResource(R.string.action_hide), tint = Color.White, modifier = Modifier.size(17.dp))
@@ -2003,43 +2011,45 @@ private fun LandscapeLiveBrowser(
                 color = Color.Black.copy(alpha = .54f)
             ) {
                 Column {
-                    OutlinedTextField(
+                    DarkTvSearchField(
                         value = channelSearch,
                         onValueChange = { channelSearch = it },
-                        placeholder = { Text(stringResource(R.string.search_channels), color = Color.White.copy(alpha = .55f)) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedTextColor = Color.White, unfocusedTextColor = Color.White,
-                            focusedBorderColor = Cyan, unfocusedBorderColor = Color.White.copy(alpha = .3f),
-                            cursorColor = Cyan
-                        ),
+                        placeholder = stringResource(R.string.search_channels),
+                        fontSize = 14.sp,
                         modifier = Modifier.fillMaxWidth().padding(8.dp)
                     )
                     LazyColumn(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    items(searchedChannels) { channel ->
+                    itemsIndexed(searchedChannels) { index, channel ->
                         val selected = channelKey(channel) == selectedChannel?.let(::channelKey)
                         // combinedClickable reports remote OK presses as individual clicks.
-                        // Pair activations on this row so double-OK also opens fullscreen.
+                        // Pair activations on this row so double-tap also opens fullscreen (touch);
+                        // a single OK press does it directly on TV, see isTv below.
                         var lastActivationAt by remember(channelKey(channel)) { mutableLongStateOf(0L) }
                         val openFullscreen: () -> Unit = {
                             lastActivationAt = 0L
                             onChannelFullscreen(channel)
-                            onExpandFullscreen()
                         }
                         Surface(
                             modifier = Modifier.fillMaxWidth()
+                                .then(if (index == 0) Modifier.focusRequester(firstChannelFocusRequester) else Modifier)
+                                .then(if (selected) Modifier.focusRequester(selectedChannelFocusRequester) else Modifier)
                                 .onFocusChanged { if (!it.isFocused) lastActivationAt = 0L }
                                 .focusableClickable(
                                     cornerRadius = 9.dp,
                                     onLongClick = openFullscreen,
                                     onDoubleClick = openFullscreen
                                 ) {
-                                    val now = android.os.SystemClock.uptimeMillis()
-                                    if (lastActivationAt != 0L && now - lastActivationAt <= 500L) {
+                                    if (isTv) {
+                                        onChannel(channel)
                                         openFullscreen()
                                     } else {
-                                        lastActivationAt = now
-                                        onChannel(channel)
+                                        val now = android.os.SystemClock.uptimeMillis()
+                                        if (lastActivationAt != 0L && now - lastActivationAt <= 500L) {
+                                            openFullscreen()
+                                        } else {
+                                            lastActivationAt = now
+                                            onChannel(channel)
+                                        }
                                     }
                                 },
                             shape = RoundedCornerShape(9.dp),
@@ -2082,7 +2092,6 @@ private fun LandscapeLiveBrowser(
                 }
             }
         }
-    }
 }
 
 @Composable
@@ -2395,11 +2404,24 @@ private fun LiveTvScreen(
         mutableStateOf(store.getString("recent_ids_v3", "").orEmpty().split('\u001F').filter(String::isNotBlank))
     }
     val channelByKey = remember(channels) { channels.associateBy(::channelKey) }
+    // Hoisted above the landscape/portrait split so the fullscreen player is a single,
+    // orientation-independent composable — rotating no longer tears down and rebuilds
+    // the ExoPlayer instance (it used to live inside whichever branch was active).
+    var immersiveFullscreen by remember { mutableStateOf(false) }
+    // Distinguishes "Live TV just opened" (focus should land on the Recently watched category)
+    // from "returning from fullscreen" (focus should land back on the channel that was playing) —
+    // see the landscape branch below.
+    var hasOpenedFullscreenOnce by remember { mutableStateOf(false) }
+    fun enterFullscreen() {
+        hasOpenedFullscreenOnce = true
+        immersiveFullscreen = true
+    }
     LaunchedEffect(resumeRequest, channelByKey) {
         val request = resumeRequest ?: return@LaunchedEffect
         channelByKey[request.itemKey]?.let { channel ->
             previewChannel = channel
             view = LiveView.PLAYER
+            if (request.autoPlay) enterFullscreen()
         }
         onResumeHandled()
     }
@@ -2465,71 +2487,85 @@ private fun LiveTvScreen(
     }
     BackHandler(onBack = ::goBack)
 
-    // Hoisted above the landscape/portrait split so the fullscreen player is a single,
-    // orientation-independent composable — rotating no longer tears down and rebuilds
-    // the ExoPlayer instance (it used to live inside whichever branch was active).
-    var immersiveFullscreen by remember { mutableStateOf(false) }
-
     PremiumBackground {
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val landscape = maxWidth > maxHeight
-            if (immersiveFullscreen) {
-                BackHandler { immersiveFullscreen = false }
-                DisposableEffect(Unit) {
-                    PictureInPictureCoordinator.eligible = true
+            if (landscape) {
+                // A single LiveChannelPreview instance (and its one ExoPlayer) is shared between
+                // the embedded background preview and the fullscreen view — toggling fullscreen
+                // used to swap in a second, independent LiveChannelPreview/ExoPlayer, which
+                // re-buffered from zero and showed a black "cutout" flash on every transition.
+                DisposableEffect(immersiveFullscreen) {
+                    PictureInPictureCoordinator.eligible = immersiveFullscreen
                     PictureInPictureCoordinator.aspectRatio = 16f / 9f
-                    onDispose { PictureInPictureCoordinator.eligible = false }
+                    onDispose { if (immersiveFullscreen) PictureInPictureCoordinator.eligible = false }
+                }
+                // Owned here (rather than inside LiveChannelPreview) so this single BackHandler can
+                // decide "hide controls" vs "exit fullscreen" itself — two independent BackHandlers
+                // registered at the same Activity-level dispatcher (this isn't a Dialog, unlike
+                // MoviePlayer's fullscreen) don't reliably prioritize the more-nested one.
+                val fullscreenControllerVisible = remember { mutableStateOf(true) }
+                if (immersiveFullscreen) {
+                    BackHandler {
+                        if (fullscreenControllerVisible.value) fullscreenControllerVisible.value = false
+                        else immersiveFullscreen = false
+                    }
+                }
+                val fullscreenChannelList = remember(channels, previewChannel, selectedCategory) {
+                    channels.filter { it.group == (previewChannel?.group ?: selectedCategory) }
                 }
                 Box(Modifier.fillMaxSize().background(Color.Black)) {
                     LiveChannelPreview(
                         channel = previewChannel,
                         modifier = Modifier.fillMaxSize(),
-                        channelList = channels.filter { it.group == (previewChannel?.group ?: selectedCategory) },
+                        channelList = if (immersiveFullscreen) fullscreenChannelList else selectedChannels,
                         onChannelChange = { rememberChannel(it) },
                         autoAdvanceOnFailure = true,
-                        hostedFullscreen = true,
-                        onFullscreenDoubleTap = { immersiveFullscreen = false }
+                        hostedFullscreen = immersiveFullscreen,
+                        onFullscreenDoubleTap = if (immersiveFullscreen) ({ immersiveFullscreen = false }) else null,
+                        onRequestFullscreen = if (!immersiveFullscreen) (::enterFullscreen) else null,
+                        controllerVisibleState = fullscreenControllerVisible
                     )
+                    if (!immersiveFullscreen) {
+                        Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .36f)))
+                        LandscapeLiveBrowser(
+                            categories = buildList {
+                                add(recentlyWatched)
+                                add(favorites)
+                                addAll(categories)
+                            },
+                            selectedCategory = selectedCategory,
+                            channels = selectedChannels,
+                            selectedChannel = previewChannel,
+                            favoriteIds = favoriteIds,
+                            returningFromFullscreen = hasOpenedFullscreenOnce,
+                            onCategory = { category ->
+                                fun enter() {
+                                    selectedCategory = category
+                                    channelQuery = ""
+                                    previewChannel = when (category) {
+                                        recentlyWatched -> recentChannels.firstOrNull()
+                                        favorites -> favoriteChannels.firstOrNull()
+                                        else -> channels.firstOrNull { it.group == category }
+                                    } ?: previewChannel
+                                }
+                                if (category in lockedCategories) requirePin(::enter) else enter()
+                            },
+                            onChannel = { rememberChannel(it) },
+                            onChannelFullscreen = { channel -> rememberChannel(channel); enterFullscreen() },
+                            onFavorite = ::toggleFavorite,
+                            onHide = { category ->
+                                val updated = hiddenCategories + category
+                                hiddenCategories = updated
+                                parental.edit().putStringSet("hidden_live_categories", updated).apply()
+                                selectedCategory = categories.firstOrNull { it != category }.orEmpty()
+                                previewChannel = channels.firstOrNull { it.group == selectedCategory }
+                            },
+                            onBack = onBack,
+                            loadEpg = loadEpg
+                        )
+                    }
                 }
-                return@BoxWithConstraints
-            }
-            if (landscape) {
-                LandscapeLiveBrowser(
-                    categories = buildList {
-                        add(recentlyWatched)
-                        add(favorites)
-                        addAll(categories)
-                    },
-                    selectedCategory = selectedCategory,
-                    channels = selectedChannels,
-                    selectedChannel = previewChannel,
-                    favoriteIds = favoriteIds,
-                    onCategory = { category ->
-                        fun enter() {
-                            selectedCategory = category
-                            channelQuery = ""
-                            previewChannel = when (category) {
-                                recentlyWatched -> recentChannels.firstOrNull()
-                                favorites -> favoriteChannels.firstOrNull()
-                                else -> channels.firstOrNull { it.group == category }
-                            } ?: previewChannel
-                        }
-                        if (category in lockedCategories) requirePin(::enter) else enter()
-                    },
-                    onChannel = { rememberChannel(it) },
-                    onChannelFullscreen = { rememberChannel(it) },
-                    onExpandFullscreen = { immersiveFullscreen = true },
-                    onFavorite = ::toggleFavorite,
-                    onHide = { category ->
-                        val updated = hiddenCategories + category
-                        hiddenCategories = updated
-                        parental.edit().putStringSet("hidden_live_categories", updated).apply()
-                        selectedCategory = categories.firstOrNull { it != category }.orEmpty()
-                        previewChannel = channels.firstOrNull { it.group == selectedCategory }
-                    },
-                    onBack = onBack,
-                    loadEpg = loadEpg
-                )
                 return@BoxWithConstraints
             }
             val sidePadding = 18.dp
@@ -2730,22 +2766,135 @@ private fun LiveHeader(title: String, subtitle: String?, onBack: () -> Unit) {
     }
 }
 
+/** On TV, D-pad-focusing a search field must not pop the keyboard on its own — only an explicit
+ *  OK press should, otherwise the keyboard covers the screen every time focus merely passes over
+ *  the field while browsing. Touch devices keep the plain always-editable field, where tapping to
+ *  focus and tapping to type are the same gesture anyway. */
 @Composable
 private fun SearchField(value: String, onValueChange: (String) -> Unit, placeholder: String) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true,
-        shape = RoundedCornerShape(15.dp),
-        leadingIcon = { Icon(Icons.Default.Search, null) },
-        trailingIcon = {
-            if (value.isNotEmpty()) AnimatedIconButton(onClick = { onValueChange("") }) {
-                Icon(Icons.Default.Close, stringResource(R.string.cd_clear_search))
+    val context = LocalContext.current
+    val isTv = remember { context.isTvDevice() }
+    if (!isTv) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            shape = RoundedCornerShape(15.dp),
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = {
+                if (value.isNotEmpty()) AnimatedIconButton(onClick = { onValueChange("") }) {
+                    Icon(Icons.Default.Close, stringResource(R.string.cd_clear_search))
+                }
+            },
+            placeholder = { Text(placeholder) }
+        )
+        return
+    }
+    var active by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    if (active) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                .onFocusChanged { if (!it.isFocused) active = false },
+            singleLine = true,
+            shape = RoundedCornerShape(15.dp),
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = {
+                if (value.isNotEmpty()) AnimatedIconButton(onClick = { onValueChange("") }) {
+                    Icon(Icons.Default.Close, stringResource(R.string.cd_clear_search))
+                }
+            },
+            placeholder = { Text(placeholder) },
+            keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); active = false })
+        )
+        LaunchedEffect(Unit) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
+    } else {
+        Surface(
+            modifier = Modifier.fillMaxWidth().focusableClickable(cornerRadius = 15.dp) { active = true },
+            shape = RoundedCornerShape(15.dp),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        ) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(10.dp))
+                Text(value.ifBlank { placeholder }, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
-        },
-        placeholder = { Text(placeholder) }
+        }
+    }
+}
+
+/** Same tap-to-activate-before-typing behaviour as [SearchField], for Live TV's dark-on-black
+ *  category/channel search fields, which use their own white-on-black colour scheme instead of
+ *  the app's default Material field styling. */
+@Composable
+private fun DarkTvSearchField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    fontSize: TextUnit = 13.sp
+) {
+    val context = LocalContext.current
+    val isTv = remember { context.isTvDevice() }
+    val colors = OutlinedTextFieldDefaults.colors(
+        focusedTextColor = Color.White, unfocusedTextColor = Color.White,
+        focusedBorderColor = Cyan, unfocusedBorderColor = Color.White.copy(alpha = .3f),
+        cursorColor = Cyan
     )
+    if (!isTv) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = { Text(placeholder, color = Color.White.copy(alpha = .55f), fontSize = fontSize) },
+            singleLine = true,
+            colors = colors,
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = fontSize),
+            modifier = modifier
+        )
+        return
+    }
+    var active by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    if (active) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onValueChange,
+            placeholder = { Text(placeholder, color = Color.White.copy(alpha = .55f), fontSize = fontSize) },
+            singleLine = true,
+            colors = colors,
+            textStyle = androidx.compose.ui.text.TextStyle(fontSize = fontSize),
+            modifier = modifier.focusRequester(focusRequester).onFocusChanged { if (!it.isFocused) active = false },
+            keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); active = false })
+        )
+        LaunchedEffect(Unit) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
+    } else {
+        Surface(
+            modifier = modifier.focusableClickable(cornerRadius = 4.dp) { active = true },
+            shape = RoundedCornerShape(4.dp),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, Color.White.copy(alpha = .3f))
+        ) {
+            Text(
+                value.ifBlank { placeholder },
+                color = Color.White.copy(alpha = if (value.isBlank()) .55f else 1f),
+                fontSize = fontSize,
+                maxLines = 1,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 14.dp)
+            )
+        }
+    }
 }
 
 @Composable
@@ -3284,6 +3433,21 @@ private fun HomeTile(
  *  while a D-pad/keyboard moves focus onto it. Regular touch users never see it (nothing gains
  *  focus from a tap), but it's the only way a remote-control user can tell which poster, row, or
  *  list item will be selected next — Android TV has no cursor or hover state to fall back on. */
+/** Cyan focus ring with a dark contrast halo drawn just behind it, so the ring stays readable
+ *  over any background colour — a plain cyan stroke can disappear against bright or similarly-toned
+ *  poster art. Shared by every D-pad-focusable rectangle in the app; see [drawFocusRing] for the
+ *  circular icon-button equivalent. */
+private fun DrawScope.drawContrastRoundRect(alpha: Float, cornerRadius: Dp, strokeWidth: Dp = 3.dp) {
+    if (alpha <= 0f) return
+    val stroke = strokeWidth.toPx()
+    val inset = stroke / 2f
+    val topLeft = Offset(inset, inset)
+    val boxSize = Size(size.width - stroke, size.height - stroke)
+    val radius = CornerRadius(cornerRadius.toPx())
+    drawRoundRect(color = Color.Black.copy(alpha = alpha * .8f), topLeft = topLeft, size = boxSize, cornerRadius = radius, style = Stroke(width = stroke + 2.5.dp.toPx()))
+    drawRoundRect(color = Cyan.copy(alpha = alpha), topLeft = topLeft, size = boxSize, cornerRadius = radius, style = Stroke(width = stroke))
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 internal fun Modifier.focusableClickable(
@@ -3295,19 +3459,12 @@ internal fun Modifier.focusableClickable(
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val focusAlpha by animateFloatAsState(if (focused) 1f else 0f, tween(150), label = "focusRing")
+    val scale by animateFloatAsState(if (focused) 1.03f else 1f, tween(150), label = "focusScale")
     return this
+        .graphicsLayer(scaleX = scale, scaleY = scale)
         .drawWithContent {
             drawContent()
-            if (focusAlpha > 0f) {
-                val strokeWidth = 2.5.dp.toPx()
-                drawRoundRect(
-                    color = Cyan.copy(alpha = focusAlpha),
-                    topLeft = Offset(strokeWidth / 2f, strokeWidth / 2f),
-                    size = Size(size.width - strokeWidth, size.height - strokeWidth),
-                    cornerRadius = CornerRadius(cornerRadius.toPx()),
-                    style = Stroke(width = strokeWidth)
-                )
-            }
+            drawContrastRoundRect(focusAlpha, cornerRadius)
         }
         .combinedClickable(
             interactionSource = interaction,
@@ -3323,7 +3480,7 @@ private fun pressFeedback(onClick: () -> Unit): Modifier {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val focused by interaction.collectIsFocusedAsState()
-    val scale by animateFloatAsState(if (pressed) .975f else 1f, tween(90), label = "press")
+    val scale by animateFloatAsState(if (pressed) .975f else if (focused) 1.03f else 1f, tween(120), label = "press")
     // Every card this is applied to clips to its own, differently-rounded shape, but a D-pad user
     // still needs SOME visible sign of which card gets selected next — a close-enough rounded
     // outline overlaid on top reads clearly as "this one" even when it doesn't hug the exact corner.
@@ -3333,16 +3490,7 @@ private fun pressFeedback(onClick: () -> Unit): Modifier {
         .graphicsLayer(scaleX = scale, scaleY = scale)
         .drawWithContent {
             drawContent()
-            if (focusAlpha > 0f) {
-                val strokeWidth = 2.5.dp.toPx()
-                drawRoundRect(
-                    color = Cyan.copy(alpha = focusAlpha),
-                    topLeft = Offset(strokeWidth / 2f, strokeWidth / 2f),
-                    size = Size(size.width - strokeWidth, size.height - strokeWidth),
-                    cornerRadius = CornerRadius(16.dp.toPx()),
-                    style = Stroke(width = strokeWidth)
-                )
-            }
+            drawContrastRoundRect(focusAlpha, 16.dp)
         }
         .clickable(interactionSource = interaction, indication = LocalIndication.current) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -3378,7 +3526,9 @@ private fun DrawScope.drawFocusRing(alpha: Float) {
     if (alpha <= 0f) return
     val radius = size.minDimension * .66f
     drawCircle(color = Cyan.copy(alpha = alpha * .16f), radius = radius, center = center)
-    drawCircle(color = Cyan.copy(alpha = alpha * .95f), radius = radius, center = center, style = Stroke(width = 2.2.dp.toPx()))
+    // Dark halo behind the bright ring so it stays visible over light icons/backgrounds too.
+    drawCircle(color = Color.Black.copy(alpha = alpha * .8f), radius = radius, center = center, style = Stroke(width = 4.4.dp.toPx()))
+    drawCircle(color = Cyan.copy(alpha = alpha * .95f), radius = radius, center = center, style = Stroke(width = 2.6.dp.toPx()))
 }
 
 /** Drives the expanding-ring tap animation: an [Animatable] restarted from 0 on every [fire]

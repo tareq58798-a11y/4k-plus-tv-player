@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -26,13 +27,18 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -465,12 +471,16 @@ private fun LandscapeSeriesBrowser(
         else -> seriesItems.filter { it.group == selectedCategory }
     }
     val displayed = if (search.isBlank()) base else seriesItems.filter { it.name.contains(search.trim(), true) }
+    val context = LocalContext.current
+    val isTv = remember { context.isTvDevice() }
+    val continueWatchingFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(isTv) { if (isTv) runCatching { continueWatchingFocusRequester.requestFocus() } }
     Row(
-        Modifier.fillMaxSize().padding(horizontal = 18.dp, vertical = 8.dp),
+        Modifier.fillMaxSize().padding(horizontal = if (isTv) 40.dp else 18.dp, vertical = if (isTv) 22.dp else 8.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Surface(
-            Modifier.width(205.dp).fillMaxHeight(),
+            Modifier.width(240.dp).fillMaxHeight(),
             shape = RoundedCornerShape(15.dp),
             color = Color.Black.copy(alpha = .34f),
             border = BorderStroke(1.dp, Color.White.copy(alpha = .08f))
@@ -485,12 +495,13 @@ private fun LandscapeSeriesBrowser(
                     items(allCategories) { category ->
                         Surface(
                             onClick = { onCategory(category) },
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.fillMaxWidth()
+                                .then(if (category == "Continue watching") Modifier.focusRequester(continueWatchingFocusRequester) else Modifier),
                             shape = RoundedCornerShape(11.dp),
                             color = if (category == selectedCategory) Cyan.copy(alpha = .24f) else Color.Transparent
                         ) {
                             Row(Modifier.padding(start = 12.dp, top = 7.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(localizedSectionTitle(category), Modifier.weight(1f), maxLines = 1, fontWeight = if (category == selectedCategory) FontWeight.Bold else FontWeight.Normal)
+                                Text(localizedSectionTitle(category), Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, fontSize = 14.sp, fontWeight = if (category == selectedCategory) FontWeight.Bold else FontWeight.Normal)
                                 if (category !in special) {
                                     AnimatedIconButton(onClick = { onHide(category) }, modifier = Modifier.size(32.dp)) {
                                         Icon(Icons.Default.VisibilityOff, stringResource(R.string.cd_hide_category, category), modifier = Modifier.size(18.dp))
@@ -512,20 +523,63 @@ private fun LandscapeSeriesBrowser(
 
 @Composable
 private fun SeriesSearch(value: String, onChange: (String) -> Unit) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onChange,
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true,
-        shape = RoundedCornerShape(15.dp),
-        placeholder = { Text(stringResource(R.string.search_all_series)) },
-        leadingIcon = { Icon(Icons.Default.Search, null) },
-        trailingIcon = {
-            if (value.isNotEmpty()) AnimatedIconButton(onClick = { onChange("") }) {
-                Icon(Icons.Default.Close, stringResource(R.string.cd_clear))
+    val context = LocalContext.current
+    val isTv = remember { context.isTvDevice() }
+    if (!isTv) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onChange,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            shape = RoundedCornerShape(15.dp),
+            placeholder = { Text(stringResource(R.string.search_all_series)) },
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = {
+                if (value.isNotEmpty()) AnimatedIconButton(onClick = { onChange("") }) {
+                    Icon(Icons.Default.Close, stringResource(R.string.cd_clear))
+                }
+            }
+        )
+        return
+    }
+    var active by remember { mutableStateOf(false) }
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    if (active) {
+        OutlinedTextField(
+            value = value,
+            onValueChange = onChange,
+            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                .onFocusChanged { if (!it.isFocused) active = false },
+            singleLine = true,
+            shape = RoundedCornerShape(15.dp),
+            placeholder = { Text(stringResource(R.string.search_all_series)) },
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = {
+                if (value.isNotEmpty()) AnimatedIconButton(onClick = { onChange("") }) {
+                    Icon(Icons.Default.Close, stringResource(R.string.cd_clear))
+                }
+            },
+            keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); active = false })
+        )
+        LaunchedEffect(Unit) {
+            focusRequester.requestFocus()
+            keyboard?.show()
+        }
+    } else {
+        Surface(
+            modifier = Modifier.fillMaxWidth().focusableClickable(cornerRadius = 15.dp) { active = true },
+            shape = RoundedCornerShape(15.dp),
+            color = Color.Transparent,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        ) {
+            Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.width(10.dp))
+                Text(value.ifBlank { stringResource(R.string.search_all_series) }, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
             }
         }
-    )
+    }
 }
 
 @Composable

@@ -14,6 +14,11 @@ class PlaylistRepository(context: Context) {
     private val sourceStore = PlaylistSourceStore(context)
     private val cacheStore = PlaylistCacheStore(context)
     private val client = XtreamProviderClient()
+    // In-memory only — cleared on process death. Movie/series metadata rarely changes mid-session,
+    // so re-opening the same title's details page while the app is still running should be instant
+    // instead of re-hitting the provider every time.
+    private val movieDetailsCache = java.util.concurrent.ConcurrentHashMap<String, MovieDetailsInfo>()
+    private val seriesDetailsCache = java.util.concurrent.ConcurrentHashMap<String, SeriesDetailsInfo>()
 
     suspend fun load(input: PlaylistInput): Result<LoadedPlaylist> = withContext(Dispatchers.IO) {
         runCatching {
@@ -61,21 +66,25 @@ class PlaylistRepository(context: Context) {
 
     suspend fun movieDetails(movie: PlaylistItem): Result<MovieDetailsInfo> = withContext(Dispatchers.IO) {
         runCatching {
+            val cacheKey = movie.channelId
+            cacheKey?.let(movieDetailsCache::get)?.let { return@runCatching it }
             val source = sourceStore.savedSource() ?: throw IllegalArgumentException("No saved provider is available.")
             require(source.kind == PlaylistKind.PROVIDER_LOGIN && !movie.channelId.isNullOrBlank()) {
                 "Detailed information is not available for this playlist."
             }
-            client.movieDetails(source, movie)
+            client.movieDetails(source, movie).also { info -> cacheKey?.let { movieDetailsCache[it] = info } }
         }.recoverCatching { throw friendlyError(it) }
     }
 
     suspend fun seriesDetails(series: PlaylistItem): Result<SeriesDetailsInfo> = withContext(Dispatchers.IO) {
         runCatching {
+            val cacheKey = series.channelId
+            cacheKey?.let(seriesDetailsCache::get)?.let { return@runCatching it }
             val source = sourceStore.savedSource() ?: throw IllegalArgumentException("No saved provider is available.")
             require(source.kind == PlaylistKind.PROVIDER_LOGIN && !series.channelId.isNullOrBlank()) {
                 "Series information is not available for this playlist."
             }
-            client.seriesDetails(source, series)
+            client.seriesDetails(source, series).also { info -> cacheKey?.let { seriesDetailsCache[it] = info } }
         }.recoverCatching { throw friendlyError(it) }
     }
 

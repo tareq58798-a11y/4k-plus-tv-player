@@ -95,6 +95,7 @@ data class SeriesDetailsInfo(
     val director: String? = null,
     val backdropUrl: String? = null,
     val posterUrl: String? = null,
+    val trailerUrl: String? = null,
     val episodes: List<SeriesEpisode> = emptyList()
 ) {
     val seasons: List<Int> get() = episodes.map { it.seasonNumber }.distinct().sorted()

@@ -6,6 +6,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.view.TextureView
 import android.view.WindowManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
@@ -13,6 +14,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
@@ -28,10 +30,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -160,8 +169,16 @@ private fun RelatedItemsStrip(
     ) {
         items(items, key = { channelKey(it) }) { related ->
             val active = channelKey(related) == currentKey
+            val focusRequester = remember { FocusRequester() }
+            // The strip only mounts while expanded, so this fires fresh each time it opens —
+            // landing the remote's focus on the currently-playing item so D-pad left/right
+            // works immediately instead of requiring the user to navigate to the strip first.
+            if (active) {
+                LaunchedEffect(Unit) { runCatching { focusRequester.requestFocus() } }
+            }
             Column(
-                Modifier.width(88.dp).clickable(enabled = !active) { onSelect(related) },
+                Modifier.width(88.dp).focusRequester(focusRequester)
+                    .focusableClickable(cornerRadius = 8.dp) { if (!active) onSelect(related) },
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Box(
@@ -269,6 +286,20 @@ internal fun MoviePlayer(
     // picture-in-picture window, which is always shown as a plain edge-to-edge rectangle.
     val portraitLayout = LocalConfiguration.current.orientation != Configuration.ORIENTATION_LANDSCAPE &&
         !PictureInPictureCoordinator.active
+    val isTv = remember { context.isTvDevice() }
+    // The native ExoPlayer/media3 controller (play/pause, seek bar) owns its own show/hide state
+    // internally; this reference is what lets the D-pad handling below actually drive it, since
+    // just flipping the Compose `controllerVisible` var wouldn't touch the real View.
+    var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
+    val rootFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(isTv, controllerVisible) {
+        if (isTv && !controllerVisible) runCatching { rootFocusRequester.requestFocus() }
+    }
+    // Mirrors Live TV fullscreen: first Back press hides the controller, a second (once it's
+    // already hidden) falls through to the outer BackHandler that exits the player.
+    if (isTv) {
+        BackHandler(enabled = controllerVisible) { playerViewRef?.hideController() }
+    }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(movie) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
@@ -323,7 +354,23 @@ internal fun MoviePlayer(
     }
     val playerContent: @Composable (Modifier, Shape) -> Unit = { contentModifier, shape ->
         Surface(contentModifier, shape, color = Color.Black) {
-            Box(Modifier.fillMaxSize()) {
+            Box(
+                Modifier.fillMaxSize()
+                    .then(
+                        if (isTv) {
+                            Modifier.focusRequester(rootFocusRequester).focusable().onKeyEvent { keyEvent ->
+                                if (keyEvent.type != KeyEventType.KeyDown || controllerVisible) return@onKeyEvent false
+                                when (keyEvent.key) {
+                                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { playerViewRef?.showController(); true }
+                                    Key.DirectionDown -> {
+                                        if (relatedItems.size > 1) { relatedStripExpanded = true; true } else false
+                                    }
+                                    else -> false
+                                }
+                            }
+                        } else Modifier
+                    )
+            ) {
             AndroidView(
                 factory = {
                     PlayerView(it).apply {
@@ -345,6 +392,7 @@ internal fun MoviePlayer(
                         ) { forward ->
                             seekFeedback = forward to System.nanoTime()
                         }
+                        playerViewRef = this
                     }
                 },
                 update = {
@@ -359,6 +407,7 @@ internal fun MoviePlayer(
                     ) { forward ->
                         seekFeedback = forward to System.nanoTime()
                     }
+                    playerViewRef = it
                 // The portrait layout already insets the whole player via safeDrawingPadding
                 // below; landscape stays edge-to-edge and needs this to clear the nav bar itself.
                 }, modifier = Modifier.fillMaxSize().then(if (portraitLayout) Modifier else Modifier.navigationBarsPadding())
@@ -850,7 +899,12 @@ internal fun LiveChannelPreview(
     hostedFullscreen: Boolean = false,
     onFullscreenDoubleTap: (() -> Unit)? = null,
     onRequestFullscreen: (() -> Unit)? = null,
-    showFullscreenButton: Boolean? = null
+    showFullscreenButton: Boolean? = null,
+    // Hoisted so a caller that also owns a fullscreen-exit BackHandler (Live TV) can resolve
+    // "hide controls" vs "exit fullscreen" as a single decision in one place — two separate
+    // BackHandlers at the same Activity-level dispatcher don't reliably prioritize the inner one,
+    // so that split can't be made locally here the way [MoviePlayer]'s Dialog-scoped one can.
+    controllerVisibleState: MutableState<Boolean>? = null
 ) {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
@@ -907,7 +961,8 @@ internal fun LiveChannelPreview(
     }
     var playbackError by remember { mutableStateOf<String?>(null) }
     var fullscreen by remember { mutableStateOf(false) }
-    var controllerVisible by remember { mutableStateOf(true) }
+    val controllerVisibleHolder = controllerVisibleState ?: remember { mutableStateOf(true) }
+    var controllerVisible by controllerVisibleHolder
     var controllerShownAt by remember { mutableLongStateOf(System.nanoTime()) }
     var stripExpanded by remember { mutableStateOf(false) }
     // Embedded previews must stay clean — suggestions are a fullscreen-only control. Unlike
@@ -920,6 +975,23 @@ internal fun LiveChannelPreview(
     fun showControllerBriefly() {
         controllerVisible = true
         controllerShownAt = System.nanoTime()
+    }
+    // controllerVisible is shared with the embedded (non-fullscreen) preview and persists across
+    // the transition — since the single player instance is never torn down (see hostedFullscreen
+    // above), it's very likely already false from sitting idle in the background before the user
+    // opened fullscreen. Force it back on at the moment fullscreen actually starts, the same as a
+    // fresh player would, so there's a controls-visible window (and Back has something to hide).
+    LaunchedEffect(suggestionsEnabled) {
+        if (suggestionsEnabled) showControllerBriefly()
+    }
+    // D-pad focus target for the whole fullscreen surface: while the overlay controls are
+    // hidden, this is the only focusable thing on screen, so left/right/down/OK below reach it
+    // directly without the user having to navigate onto anything first. Re-requested whenever
+    // the controls hide again (they auto-hide after 4s, or on the first Back press — see below)
+    // so the remote keeps working without requiring another manual focus move.
+    val rootFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(suggestionsEnabled, controllerVisible) {
+        if (suggestionsEnabled && !controllerVisible) runCatching { rootFocusRequester.requestFocus() }
     }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(channel?.streamUrl) { mutableStateOf<Uri?>(null) }
@@ -1006,9 +1078,43 @@ internal fun LiveChannelPreview(
     val fullscreenDoubleTapExit: (() -> Unit)? = if ((fullscreen || hostedFullscreen) && onFullscreenDoubleTap != null) {
         { fullscreen = false; onFullscreenDoubleTap() }
     } else null
+    // On TV, the first Back press while fullscreen should just dismiss the overlay controls
+    // (matching how the on-screen "hide" gesture works for touch) — only a second Back press,
+    // once they're already hidden, should fall through to whatever exits fullscreen. Skipped
+    // when a caller supplies controllerVisibleState: that means it also owns a competing exit
+    // BackHandler of its own (Live TV's hostedFullscreen, not a Dialog), and two independent
+    // BackHandlers registered at the same Activity-level dispatcher don't reliably prioritize the
+    // inner one — that caller resolves both as a single decision itself instead (see LiveTvScreen).
+    // The plain `fullscreen` Dialog path below has its own separate window/dispatcher, so this
+    // still works correctly there.
+    if (suggestionsEnabled && controllerVisibleState == null) {
+        BackHandler(enabled = controllerVisible) { controllerVisible = false }
+    }
     val playerContent: @Composable (Modifier, Shape) -> Unit = { contentModifier, shape ->
         Surface(modifier = contentModifier, shape = shape, color = Color.Black, shadowElevation = 8.dp) {
-            Box(Modifier.fillMaxSize()) {
+            Box(
+                Modifier.fillMaxSize()
+                    .then(
+                        if (suggestionsEnabled) {
+                            Modifier.focusRequester(rootFocusRequester).focusable().onKeyEvent { keyEvent ->
+                                if (keyEvent.type != KeyEventType.KeyDown || channel == null || controllerVisible) return@onKeyEvent false
+                                when (keyEvent.key) {
+                                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { showControllerBriefly(); true }
+                                    Key.DirectionDown -> {
+                                        if (channelList.size > 1) { stripExpanded = true; true } else false
+                                    }
+                                    Key.DirectionLeft -> {
+                                        if (channelList.size > 1) { switchChannel(forward = false); true } else false
+                                    }
+                                    Key.DirectionRight -> {
+                                        if (channelList.size > 1) { switchChannel(forward = true); true } else false
+                                    }
+                                    else -> false
+                                }
+                            }
+                        } else Modifier
+                    )
+            ) {
             if (channel == null) {
                 Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(Icons.Default.LiveTv, null, tint = Cyan, modifier = Modifier.size(34.dp))

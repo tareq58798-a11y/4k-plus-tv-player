@@ -77,6 +77,9 @@ internal class XtreamProviderClient {
                     (0 until array.length()).asSequence().map { array.optString(it) }
                         .firstOrNull(String::isNotBlank)
                 } ?: info.optString("backdrop_path").takeIf { it.startsWith("http", true) }
+                val trailer = info.optString("youtube_trailer").takeIf(String::isNotBlank)?.let { value ->
+                    if (value.startsWith("http", true)) value else "https://www.youtube.com/watch?v=$value"
+                }
                 val episodesObject = root.optJSONObject("episodes") ?: JSONObject()
                 val episodes = buildList {
                     val seasonKeys = episodesObject.keys()
@@ -118,6 +121,7 @@ internal class XtreamProviderClient {
                     director = firstText(info, "director"),
                     backdropUrl = backdrop,
                     posterUrl = firstText(info, "cover_big", "cover") ?: series.logoUrl,
+                    trailerUrl = trailer,
                     episodes = episodes
                 )
             } catch (error: Exception) {
