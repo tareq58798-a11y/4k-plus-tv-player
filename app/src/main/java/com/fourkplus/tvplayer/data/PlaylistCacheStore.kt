@@ -23,7 +23,7 @@ internal class PlaylistCacheStore(context: Context) {
                 legacyCacheFile.exists() -> legacyCacheFile
                 else -> return@runCatching null
             }
-            val loaded = DataInputStream(GZIPInputStream(selectedFile.inputStream().buffered())).use { input ->
+            val loaded = DataInputStream(GZIPInputStream(selectedFile.inputStream().buffered(IO_BUFFER_BYTES))).use { input ->
                 require(input.readInt() == CACHE_VERSION) { "Unsupported playlist cache." }
                 val name = input.readSizedString()
                 val accountStatus = input.readNullableString()
@@ -31,24 +31,44 @@ internal class PlaylistCacheStore(context: Context) {
                 val itemCount = input.readInt()
                 require(itemCount in 0..500_000) { "Invalid playlist cache." }
                 val items = ArrayList<PlaylistItem>(itemCount)
+                // Building the distinct group set inline (instead of a second
+                // items.map{}.distinct() pass afterwards) skips allocating an
+                // 80,000+-element intermediate list just to deduplicate it - the same
+                // information is already right here as each item is read.
+                val groups = LinkedHashSet<String>()
                 repeat(itemCount) {
+                    // Field order here must exactly match save()'s write order below - these
+                    // are read into locals first (rather than inline in the constructor call)
+                    // so that order is unambiguous regardless of Kotlin's argument evaluation
+                    // rules, since each read has the side effect of advancing the stream.
+                    val itemName = input.readSizedString()
+                    val streamUrl = input.readSizedString()
+                    val group = input.readSizedString()
+                    val logoUrl = input.readNullableString()
+                    val channelId = input.readNullableString()
+                    val kind = MediaKind.valueOf(input.readSizedString())
+                    val description = input.readNullableString()
+                    val year = input.readNullableString()
+                    val rating = input.readNullableString()
+                    val duration = input.readNullableString()
+                    groups += group
                     items += PlaylistItem(
-                        name = input.readSizedString(),
-                        streamUrl = input.readSizedString(),
-                        group = input.readSizedString(),
-                        logoUrl = input.readNullableString(),
-                        channelId = input.readNullableString(),
-                        kind = MediaKind.valueOf(input.readSizedString()),
-                        description = input.readNullableString(),
-                        year = input.readNullableString(),
-                        rating = input.readNullableString(),
-                        duration = input.readNullableString()
+                        name = itemName,
+                        streamUrl = streamUrl,
+                        group = group,
+                        logoUrl = logoUrl,
+                        channelId = channelId,
+                        kind = kind,
+                        description = description,
+                        year = year,
+                        rating = rating,
+                        duration = duration
                     )
                 }
                 LoadedPlaylist(
                     name = name,
                     items = items,
-                    groups = items.map { it.group }.distinct(),
+                    groups = groups.toList(),
                     accountStatus = accountStatus,
                     expiryEpochSeconds = expiryEpochSeconds
                 )
@@ -63,7 +83,7 @@ internal class PlaylistCacheStore(context: Context) {
         val destination = cacheFileFor(source)
         val temporary = appContext.filesDir.resolve(destination.name + ".tmp")
         runCatching {
-            DataOutputStream(GZIPOutputStream(temporary.outputStream().buffered())).use { output ->
+            DataOutputStream(GZIPOutputStream(temporary.outputStream().buffered(IO_BUFFER_BYTES))).use { output ->
                 output.writeInt(CACHE_VERSION)
                 output.writeSizedString(playlist.name)
                 output.writeNullableString(playlist.accountStatus)
@@ -127,5 +147,10 @@ internal class PlaylistCacheStore(context: Context) {
 
     private companion object {
         const val CACHE_VERSION = 4
+        // Larger than the default 8KB: fewer read()/write() syscalls against the underlying
+        // file for a cache that's routinely several MB (tens of thousands of items), which
+        // matters more on the slower flash storage typical of budget TV boxes than it would
+        // on a phone.
+        const val IO_BUFFER_BYTES = 65_536
     }
 }
