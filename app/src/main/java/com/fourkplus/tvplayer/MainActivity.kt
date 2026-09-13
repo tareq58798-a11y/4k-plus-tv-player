@@ -1261,13 +1261,14 @@ private fun HomeScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Row(
-                            Modifier.fillMaxWidth().height(118.dp),
+                            Modifier.fillMaxWidth().height(140.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             HomeTile(stringResource(R.string.nav_live_tv), playlist?.let { stringResource(R.string.home_live_tv_count, it.liveCount) } ?: stringResource(R.string.home_live_tv_default), Icons.Default.LiveTv, TileKind.LIVE, isDark, Modifier.weight(1f).fillMaxHeight().focusRequester(liveTileFocusRequester), height = null, onClick = onOpenLive)
                             HomeTile(stringResource(R.string.nav_movies), playlist?.let { stringResource(R.string.home_movies_count, it.movieCount) } ?: stringResource(R.string.home_movies_default), Icons.Default.Movie, TileKind.MOVIES, isDark, Modifier.weight(1f).fillMaxHeight(), height = null, onClick = onOpenMovies)
                             HomeTile(stringResource(R.string.nav_series), playlist?.let { stringResource(R.string.home_series_count, it.seriesCount) } ?: stringResource(R.string.home_series_default), Icons.Default.VideoLibrary, TileKind.SERIES, isDark, Modifier.weight(1f).fillMaxHeight(), height = null, onClick = onOpenSeries)
                         }
+                        Spacer(Modifier.height(14.dp))
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = liveShelfHeader)
                         if (featuredPreviews.isNotEmpty()) {
                             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1454,10 +1455,7 @@ private fun RecentLiveCard(
             }
         }
         Text(item.name, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-            Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFFFF3B3B)))
-            Text(stringResource(R.string.home_live_badge), fontSize = 10.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onBackground)
-        }
+        Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFFFF3B3B)))
     }
 }
 
