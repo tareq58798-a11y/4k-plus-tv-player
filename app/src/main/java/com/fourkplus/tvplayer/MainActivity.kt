@@ -1248,16 +1248,22 @@ private fun HomeScreen(
                             else onMessage(nothingToContinueYet)
                         }
                     }
-                    // No device-info bar here: it would crowd the fixed height, and the same values
-                    // are on Settings > App & playlist information.
+                    // No verticalScroll here: the tile row's weight(1f) below absorbs whatever
+                    // vertical space the shelf/device-info don't need, so the device-info box
+                    // always lands flush with this column's bottom edge - lining up with
+                    // Continue Watching's bottom edge on the left, instead of floating wherever
+                    // the (variable-height) content above it happens to end.
                     Column(
-                        Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                        Modifier.weight(1f).fillMaxHeight(),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            HomeTile(stringResource(R.string.nav_live_tv), playlist?.let { stringResource(R.string.home_live_tv_count, it.liveCount) } ?: stringResource(R.string.home_live_tv_default), Icons.Default.LiveTv, TileKind.LIVE, isDark, Modifier.weight(1f).focusRequester(liveTileFocusRequester), 92.dp, onOpenLive)
-                            HomeTile(stringResource(R.string.nav_movies), playlist?.let { stringResource(R.string.home_movies_count, it.movieCount) } ?: stringResource(R.string.home_movies_default), Icons.Default.Movie, TileKind.MOVIES, isDark, Modifier.weight(1f), 92.dp, onOpenMovies)
-                            HomeTile(stringResource(R.string.nav_series), playlist?.let { stringResource(R.string.home_series_count, it.seriesCount) } ?: stringResource(R.string.home_series_default), Icons.Default.VideoLibrary, TileKind.SERIES, isDark, Modifier.weight(1f), 92.dp, onOpenSeries)
+                        Row(
+                            Modifier.fillMaxWidth().weight(1f),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            HomeTile(stringResource(R.string.nav_live_tv), playlist?.let { stringResource(R.string.home_live_tv_count, it.liveCount) } ?: stringResource(R.string.home_live_tv_default), Icons.Default.LiveTv, TileKind.LIVE, isDark, Modifier.weight(1f).fillMaxHeight().focusRequester(liveTileFocusRequester), height = null, onClick = onOpenLive)
+                            HomeTile(stringResource(R.string.nav_movies), playlist?.let { stringResource(R.string.home_movies_count, it.movieCount) } ?: stringResource(R.string.home_movies_default), Icons.Default.Movie, TileKind.MOVIES, isDark, Modifier.weight(1f).fillMaxHeight(), height = null, onClick = onOpenMovies)
+                            HomeTile(stringResource(R.string.nav_series), playlist?.let { stringResource(R.string.home_series_count, it.seriesCount) } ?: stringResource(R.string.home_series_default), Icons.Default.VideoLibrary, TileKind.SERIES, isDark, Modifier.weight(1f).fillMaxHeight(), height = null, onClick = onOpenSeries)
                         }
                         if (featuredPreviews.isNotEmpty()) {
                             HomeCompactShelfHeader(stringResource(R.string.home_recently_watched_live), isDark, onOpenLive)
@@ -3595,13 +3601,13 @@ private fun HomeTile(
     kind: TileKind,
     isDark: Boolean,
     modifier: Modifier,
-    height: Dp = 132.dp,
+    height: Dp? = 132.dp,
     onClick: () -> Unit
 ) {
     val palette = remember(kind, isDark) { tilePalette(kind, isDark) }
     Box(
         modifier
-            .height(height)
+            .then(if (height != null) Modifier.height(height) else Modifier)
             .clip(RoundedCornerShape(18.dp))
             .background(palette.container)
             .border(1.dp, palette.border, RoundedCornerShape(18.dp))
