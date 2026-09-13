@@ -253,7 +253,12 @@ internal class XtreamProviderClient {
                 item.optString("name", "Unnamed movie"),
                 "$server/movie/${encode(input.username)}/${encode(input.password)}/$id.$extension",
                 groups[item.optString("category_id")] ?: "Other",
-                item.optText("stream_icon"), id, MediaKind.MOVIE,
+                // Field name for the poster varies a lot between Xtream panel forks - some put it
+                // on stream_icon (like live channels), others only on cover/cover_big/movie_image
+                // even at the list level (movieDetails' get_vod_info fallback already checks this
+                // same set; the list endpoint needs the same breadth or most posters stay blank
+                // until the details page is opened).
+                firstText(item, "stream_icon", "cover", "cover_big", "movie_image"), id, MediaKind.MOVIE,
                 description = item.optText("plot"),
                 year = item.optText("year") ?: item.optText("releaseDate")?.take(4),
                 rating = item.optText("rating"),
@@ -270,7 +275,7 @@ internal class XtreamProviderClient {
             add(PlaylistItem(
                 item.optString("name", "Unnamed series"), "series://$id",
                 groups[item.optString("category_id")] ?: "Other",
-                item.optText("cover"), id, MediaKind.SERIES
+                firstText(item, "cover", "cover_big", "movie_image", "stream_icon"), id, MediaKind.SERIES
             ))
         }
     }
