@@ -944,6 +944,7 @@ private fun ManualPlaylistScreen(
     loadPlaylist: suspend (PlaylistInput) -> Result<LoadedPlaylist>,
     onConnected: (LoadedPlaylist) -> Unit
 ) {
+    BackHandler(onBack = onBack)
     var serverIndex by remember { mutableStateOf(0) }
     var name by remember { mutableStateOf("") }
     var username by remember { mutableStateOf("") }
@@ -1040,6 +1041,7 @@ private fun PlaylistManagerScreen(
     onSelect: (PlaylistInput) -> Unit,
     onRemove: (PlaylistInput) -> Unit
 ) {
+    BackHandler(onBack = onBack)
     var removing by remember { mutableStateOf<PlaylistInput?>(null) }
     removing?.let { source ->
         AlertDialog(
@@ -3068,6 +3070,7 @@ private fun DarkTvSearchField(
             onValueChange = onValueChange,
             placeholder = { Text(placeholder, color = Color.White.copy(alpha = .55f), fontSize = fontSize) },
             singleLine = true,
+            shape = RoundedCornerShape(15.dp),
             colors = colors,
             textStyle = androidx.compose.ui.text.TextStyle(fontSize = fontSize),
             modifier = modifier
@@ -3084,6 +3087,7 @@ private fun DarkTvSearchField(
             onValueChange = onValueChange,
             placeholder = { Text(placeholder, color = Color.White.copy(alpha = .55f), fontSize = fontSize) },
             singleLine = true,
+            shape = RoundedCornerShape(15.dp),
             colors = colors,
             textStyle = androidx.compose.ui.text.TextStyle(fontSize = fontSize),
             modifier = modifier.focusRequester(focusRequester).onFocusChanged {
@@ -3100,8 +3104,8 @@ private fun DarkTvSearchField(
         }
     } else {
         Surface(
-            modifier = modifier.focusableClickable(cornerRadius = 4.dp) { hasFocusedOnce = false; active = true },
-            shape = RoundedCornerShape(4.dp),
+            modifier = modifier.focusableClickable(cornerRadius = 15.dp) { hasFocusedOnce = false; active = true },
+            shape = RoundedCornerShape(15.dp),
             color = Color.Transparent,
             border = BorderStroke(1.dp, Color.White.copy(alpha = .3f))
         ) {
@@ -3503,6 +3507,7 @@ private fun GlobalSearchScreen(
     onBack: () -> Unit,
     onSelect: (PlaylistItem) -> Unit
 ) {
+    BackHandler(onBack = onBack)
     var query by remember { mutableStateOf("") }
     val results = remember(playlist, query) {
         if (query.isBlank()) emptyList()
@@ -3527,6 +3532,7 @@ private fun GlobalSearchScreen(
                 placeholder = { Text(stringResource(R.string.search_placeholder)) },
                 leadingIcon = { Icon(Icons.Default.Search, null) },
                 singleLine = true,
+                shape = RoundedCornerShape(15.dp),
                 modifier = Modifier.fillMaxWidth()
             )
             when {
