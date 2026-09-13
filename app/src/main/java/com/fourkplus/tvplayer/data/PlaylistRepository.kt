@@ -26,7 +26,12 @@ class PlaylistRepository(context: Context) {
                 cacheStore.save(resolved, playlist)
                 return@runCatching playlist
             }
-            require(ApprovedServers.allows(input)) { "Please add an account using Server 1 or Server 2." }
+            // A source already sitting in the store was validated when it was first added (either
+            // here, or via the trusted activation branch above) — reloading it (switching back to
+            // it, refreshing, retrying after a cache miss) must not re-run the manual-entry-only
+            // allowlist, which activation-resolved servers were never meant to satisfy.
+            val alreadySaved = sourceStore.savedSources().any { it.sourceId() == input.sourceId() }
+            require(alreadySaved || ApprovedServers.allows(input)) { "Please add an account using Server 1 or Server 2." }
             val playlist = client.load(input)
             sourceStore.saveSource(input)
             cacheStore.save(input, playlist)
@@ -50,7 +55,7 @@ class PlaylistRepository(context: Context) {
     }
 
     suspend fun loadCached(source: PlaylistInput? = sourceStore.savedSource()): LoadedPlaylist? = withContext(Dispatchers.IO) {
-        val selected = source?.takeIf(ApprovedServers::allows) ?: return@withContext null
+        val selected = source ?: return@withContext null
         cacheStore.load(selected)
     }
 
@@ -71,6 +76,21 @@ class PlaylistRepository(context: Context) {
                 "Series information is not available for this playlist."
             }
             client.seriesDetails(source, series)
+        }.recoverCatching { throw friendlyError(it) }
+    }
+
+    suspend fun shortEpg(channel: PlaylistItem): Result<EpgNowNext> = withContext(Dispatchers.IO) {
+        runCatching {
+            val source = sourceStore.savedSource() ?: throw IllegalArgumentException("No saved provider is available.")
+            require(source.kind == PlaylistKind.PROVIDER_LOGIN && !channel.channelId.isNullOrBlank()) {
+                "Programme information is not available for this playlist."
+            }
+            val nowEpoch = System.currentTimeMillis() / 1000
+            val programs = client.shortEpg(source, channel.channelId)
+            EpgNowNext(
+                now = programs.firstOrNull { nowEpoch in it.startEpochSeconds until it.endEpochSeconds },
+                next = programs.filter { it.startEpochSeconds > nowEpoch }.minByOrNull { it.startEpochSeconds }
+            )
         }.recoverCatching { throw friendlyError(it) }
     }
 

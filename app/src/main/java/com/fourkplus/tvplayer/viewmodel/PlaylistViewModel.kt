@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.fourkplus.tvplayer.data.EpgNowNext
 import com.fourkplus.tvplayer.data.LoadedPlaylist
 import com.fourkplus.tvplayer.data.MovieDetailsInfo
 import com.fourkplus.tvplayer.data.PlaylistInput
@@ -136,6 +137,7 @@ class PlaylistViewModel(private val repository: PlaylistRepository) : ViewModel(
     // SeriesScreen from needing their own PlaylistRepository instance.
     suspend fun movieDetails(movie: PlaylistItem): Result<MovieDetailsInfo> = repository.movieDetails(movie)
     suspend fun seriesDetails(series: PlaylistItem): Result<SeriesDetailsInfo> = repository.seriesDetails(series)
+    suspend fun shortEpg(channel: PlaylistItem): Result<EpgNowNext> = repository.shortEpg(channel)
 
     class Factory(private val appContext: Context) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")

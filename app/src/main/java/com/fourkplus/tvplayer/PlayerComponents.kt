@@ -1,7 +1,9 @@
 package com.fourkplus.tvplayer
 
 import android.content.Intent
+import android.graphics.Bitmap
 import android.net.Uri
+import android.view.TextureView
 import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -10,6 +12,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
@@ -49,9 +52,13 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import coil.compose.AsyncImage
+import com.fourkplus.tvplayer.data.LiveSnapshotCache
 import com.fourkplus.tvplayer.data.PlaylistItem
 import com.fourkplus.tvplayer.ui.theme.*
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The single place an ExoPlayer instance gets built for this app. Both [MoviePlayer] and
@@ -68,6 +75,70 @@ internal fun buildFourKPlusExoPlayer(context: android.content.Context, skipSecon
         .setSeekForwardIncrementMs(skipSeconds * 1_000L)
         .build()
         .apply { volume = if (muted) 0f else 1f }
+}
+
+/**
+ * Mounts a 1dp, invisible ExoPlayer+TextureView just long enough to grab one frame from
+ * [streamUrl]'s live stream, then calls [onResult] with the captured bitmap (or null on failure
+ * or after a short timeout) and tears the player down. Used by Home's "Recently Watched Live TV"
+ * cards to show a real, recent frame instead of a static logo, without keeping anything playing.
+ *
+ * Uses TextureView.getBitmap(width, height) rather than a hand-built ImageReader capture: the
+ * framework handles the GL readback/scaling itself, so a decoder outputting a different
+ * resolution than expected can't corrupt memory the way a manually-sized pixel buffer can.
+ *
+ * Capture is triggered from Player.Listener.onRenderedFirstFrame() rather than the TextureView's
+ * own SurfaceTextureListener: ExoPlayer.setVideoTextureView() silently takes over that listener
+ * (logged as "Replacing existing SurfaceTextureListener"), so a listener set here would simply
+ * stop being called the moment playback starts.
+ */
+@Composable
+internal fun LiveSnapshotEffect(streamUrl: String, onResult: (Bitmap?) -> Unit) {
+    val context = LocalContext.current
+    var firstFrameAt by remember(streamUrl) { mutableStateOf(0L) }
+    var textureView by remember(streamUrl) { mutableStateOf<TextureView?>(null) }
+    val player = remember(streamUrl) { buildFourKPlusExoPlayer(context, skipSeconds = 10, muted = true) }
+    val completion = remember(streamUrl) { CompletableDeferred<Bitmap?>() }
+
+    fun finishOnce(bitmap: Bitmap?) {
+        if (completion.isCompleted) return
+        completion.complete(bitmap)
+        onResult(bitmap)
+    }
+
+    DisposableEffect(player, streamUrl) {
+        val listener = object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) { finishOnce(null) }
+            override fun onRenderedFirstFrame() { firstFrameAt = System.nanoTime() }
+        }
+        player.addListener(listener)
+        onDispose {
+            player.removeListener(listener)
+            player.release()
+        }
+    }
+    LaunchedEffect(firstFrameAt) {
+        if (firstFrameAt == 0L) return@LaunchedEffect
+        delay(150) // lets the SurfaceTexture consume the frame (updateTexImage) before we read it
+        finishOnce(runCatching { textureView?.getBitmap(320, 200) }.getOrNull())
+    }
+    // Waits its turn behind any other card's capture before connecting, so accounts limited to
+    // one concurrent stream don't have every visible card's attempt rejected at once.
+    LaunchedEffect(player, streamUrl) {
+        LiveSnapshotCache.captureMutex.withLock {
+            if (completion.isCompleted) return@withLock
+            player.setMediaItem(MediaItem.fromUri(streamUrl))
+            player.prepare()
+            player.playWhenReady = true
+            withTimeoutOrNull(12_000) { completion.await() }
+            finishOnce(null)
+        }
+    }
+    AndroidView(
+        modifier = Modifier.size(1.dp),
+        factory = { ctx -> TextureView(ctx).also { textureView = it } },
+        update = { view -> player.setVideoTextureView(view) }
+    )
 }
 
 /** Horizontal strip of sibling items (other episodes of a series, other channels in a category) shown under the player, with the currently-playing one highlighted and every other one tappable to switch directly. */
@@ -183,7 +254,11 @@ internal fun MoviePlayer(
         return
     }
     var error by remember(movie) { mutableStateOf<String?>(null) }
-    var fullscreen by remember(movie) { mutableStateOf(true) }
+    DisposableEffect(Unit) {
+        PictureInPictureCoordinator.eligible = true
+        PictureInPictureCoordinator.aspectRatio = 16f / 9f
+        onDispose { PictureInPictureCoordinator.eligible = false }
+    }
     var controllerVisible by remember { mutableStateOf(true) }
     var relatedStripExpanded by remember { mutableStateOf(false) }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
@@ -266,6 +341,7 @@ internal fun MoviePlayer(
                 },
                 update = {
                     it.player = player
+                    it.useController = !PictureInPictureCoordinator.active
                     it.resizeMode = videoResizeMode
                     applyRequestedAspectRatio(it, videoMode)
                     installDoubleTapSeek(
@@ -275,7 +351,7 @@ internal fun MoviePlayer(
                     ) { forward ->
                         seekFeedback = forward to System.nanoTime()
                     }
-                }, modifier = Modifier.fillMaxSize()
+                }, modifier = Modifier.fillMaxSize().navigationBarsPadding()
             )
             seekFeedback?.let { feedback ->
                 DoubleTapSeekFeedback(
@@ -287,12 +363,12 @@ internal fun MoviePlayer(
                         .padding(horizontal = 34.dp)
                 )
             }
-            if (seekFeedback == null) PlaybackOptionsOverlay(
+            if (seekFeedback == null && !PictureInPictureCoordinator.active) PlaybackOptionsOverlay(
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                 player = player,
-                fullscreen = fullscreen,
+                fullscreen = true,
                 onFullscreenChange = { enabled ->
-                    if (enabled) fullscreen = true else onExit()
+                    if (!enabled) onExit()
                 },
                 subtitlesEnabled = subtitlesEnabled,
                 onSubtitlesEnabledChange = {
@@ -317,7 +393,7 @@ internal fun MoviePlayer(
                     Text(it, color = Color.White, modifier = Modifier.padding(16.dp))
                 }
             }
-            if (controllerVisible && !relatedStripExpanded && relatedItems.size > 1) {
+            if (controllerVisible && !relatedStripExpanded && relatedItems.size > 1 && !PictureInPictureCoordinator.active) {
                 Icon(
                     Icons.Default.KeyboardArrowUp,
                     "Swipe up for other episodes",
@@ -325,7 +401,7 @@ internal fun MoviePlayer(
                     modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 8.dp).size(22.dp)
                 )
             }
-            if (relatedStripExpanded && relatedItems.size > 1) {
+            if (relatedStripExpanded && relatedItems.size > 1 && !PictureInPictureCoordinator.active) {
                 Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 64.dp)) {
                     Text(
                         "Other episodes",
@@ -344,17 +420,10 @@ internal fun MoviePlayer(
         }
     }
     }
-    if (fullscreen) {
-        Dialog(
-            onDismissRequest = onExit,
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
-        ) {
-            AllowDrawingUnderCutout()
-            playerContent(Modifier.fillMaxSize(), RectangleShape)
-        }
-    } else {
-        playerContent(modifier.fillMaxWidth(), RoundedCornerShape(18.dp))
-    }
+    // Rendered directly in the Activity's own content (not a Dialog, which opens a separate
+    // Android window) so entering picture-in-picture — which resizes the Activity's window —
+    // actually carries the video into the floating window instead of leaving it blank.
+    playerContent(modifier.fillMaxSize(), RectangleShape)
 }
 
 @Composable
@@ -545,7 +614,7 @@ private fun PlaybackOptionsOverlay(
         shape = RoundedCornerShape(13.dp)
     ) {
         Row(Modifier.padding(horizontal = 4.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
-            IconButton(
+            AnimatedIconButton(
                 onClick = {
                     muted = !muted
                     player.volume = if (muted) 0f else 1f
@@ -561,7 +630,7 @@ private fun PlaybackOptionsOverlay(
                 )
             }
             Box {
-                IconButton(onClick = { subtitleMenu = true }, modifier = Modifier.size(38.dp)) {
+                AnimatedIconButton(onClick = { subtitleMenu = true }, modifier = Modifier.size(38.dp)) {
                     Icon(Icons.Default.Subtitles, "Subtitles", tint = if (subtitlesEnabled) Cyan else Color.White)
                 }
                 DropdownMenu(subtitleMenu, onDismissRequest = { subtitleMenu = false }) {
@@ -588,7 +657,7 @@ private fun PlaybackOptionsOverlay(
                 }
             }
             Box {
-                IconButton(onClick = { skipMenu = true }, modifier = Modifier.size(38.dp)) {
+                AnimatedIconButton(onClick = { skipMenu = true }, modifier = Modifier.size(38.dp)) {
                     Icon(Icons.Default.MoreTime, "Skip interval", tint = Color.White)
                 }
                 DropdownMenu(skipMenu, onDismissRequest = { skipMenu = false }) {
@@ -602,7 +671,7 @@ private fun PlaybackOptionsOverlay(
                 }
             }
             Box {
-                IconButton(onClick = { sizeMenu = true }, modifier = Modifier.size(38.dp)) {
+                AnimatedIconButton(onClick = { sizeMenu = true }, modifier = Modifier.size(38.dp)) {
                     Icon(Icons.Default.AspectRatio, "Screen dimensions", tint = Cyan)
                 }
                 DropdownMenu(sizeMenu, onDismissRequest = { sizeMenu = false }) {
@@ -624,7 +693,7 @@ private fun PlaybackOptionsOverlay(
                 }
             }
             if (showFullscreen) {
-                IconButton(onClick = { onFullscreenChange(!fullscreen) }, modifier = Modifier.size(38.dp)) {
+                AnimatedIconButton(onClick = { onFullscreenChange(!fullscreen) }, modifier = Modifier.size(38.dp)) {
                     Icon(if (fullscreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen, "Fullscreen", tint = Color.White)
                 }
             }
@@ -699,7 +768,8 @@ internal fun LiveChannelPreview(
     autoAdvanceOnFailure: Boolean = false,
     hostedFullscreen: Boolean = false,
     onFullscreenDoubleTap: (() -> Unit)? = null,
-    onRequestFullscreen: (() -> Unit)? = null
+    onRequestFullscreen: (() -> Unit)? = null,
+    showFullscreenButton: Boolean? = null
 ) {
     val context = LocalContext.current
     val settings = remember { context.getSharedPreferences("playback_settings", android.content.Context.MODE_PRIVATE) }
@@ -767,6 +837,7 @@ internal fun LiveChannelPreview(
     var externalSubtitle by remember(channel?.streamUrl) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
     var seekFeedback by remember { mutableStateOf<Pair<Boolean, Long>?>(null) }
+    var channelSwitchFeedback by remember { mutableStateOf<Pair<String, Long>?>(null) }
     // Persists for this composable's lifetime (not reset per channel) so a chain of consecutive
     // auto-advances is bounded overall, not just per hop.
     var autoAdvanceAttempts by remember { mutableIntStateOf(0) }
@@ -775,6 +846,20 @@ internal fun LiveChannelPreview(
             delay(650)
             seekFeedback = null
         }
+    }
+    LaunchedEffect(channelSwitchFeedback?.second) {
+        if (channelSwitchFeedback != null) {
+            delay(1_200)
+            channelSwitchFeedback = null
+        }
+    }
+    fun switchChannel(forward: Boolean) {
+        val current = channel ?: return
+        val index = channelList.indexOfFirst { channelKey(it) == channelKey(current) }
+        if (index < 0) return
+        val next = channelList.getOrNull(if (forward) index + 1 else index - 1) ?: return
+        onChannelChange(next)
+        channelSwitchFeedback = next.name to System.nanoTime()
     }
     LaunchedEffect(controllerShownAt, controllerVisible) {
         if (controllerVisible) {
@@ -899,7 +984,45 @@ internal fun LiveChannelPreview(
                                 }
                             )
                         }
+                        .then(
+                            if ((fullscreen || hostedFullscreen) && channelList.size > 1) {
+                                Modifier.pointerInput(channel.streamUrl) {
+                                    var accumulated = 0f
+                                    detectHorizontalDragGestures(
+                                        onDragStart = { accumulated = 0f },
+                                        onHorizontalDrag = { change, dragAmount ->
+                                            accumulated += dragAmount
+                                            if (accumulated < -80) {
+                                                switchChannel(forward = true)
+                                                accumulated = 0f
+                                                change.consume()
+                                            } else if (accumulated > 80) {
+                                                switchChannel(forward = false)
+                                                accumulated = 0f
+                                                change.consume()
+                                            }
+                                        }
+                                    )
+                                }
+                            } else Modifier
+                        )
                 )
+                if (!PictureInPictureCoordinator.active) channelSwitchFeedback?.let { feedback ->
+                    Surface(
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 18.dp),
+                        color = Color.Black.copy(alpha = .68f),
+                        shape = RoundedCornerShape(20.dp)
+                    ) {
+                        Text(
+                            feedback.first,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 13.sp,
+                            maxLines = 1,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 9.dp)
+                        )
+                    }
+                }
                 seekFeedback?.let { feedback ->
                     DoubleTapSeekFeedback(
                         forward = feedback.first,
@@ -910,7 +1033,7 @@ internal fun LiveChannelPreview(
                             .padding(horizontal = 34.dp)
                     )
                 }
-                if (controllerVisible && seekFeedback == null) PlaybackOptionsOverlay(
+                if (controllerVisible && seekFeedback == null && !PictureInPictureCoordinator.active) PlaybackOptionsOverlay(
                     modifier = Modifier.align(Alignment.TopEnd)
                         .then(
                             if (fullscreen || hostedFullscreen) Modifier
@@ -921,7 +1044,7 @@ internal fun LiveChannelPreview(
                         .padding(8.dp),
                     player = player,
                     fullscreen = fullscreen,
-                    showFullscreen = !hostedFullscreen && onRequestFullscreen == null,
+                    showFullscreen = showFullscreenButton ?: (!hostedFullscreen && onRequestFullscreen == null),
                     onFullscreenChange = { requested ->
                         if (requested && onRequestFullscreen != null) onRequestFullscreen() else fullscreen = requested
                     },
@@ -956,7 +1079,7 @@ internal fun LiveChannelPreview(
                         }
                     }
                 }
-                if (controllerVisible && !stripExpanded && channelList.size > 1) {
+                if (controllerVisible && !stripExpanded && channelList.size > 1 && !PictureInPictureCoordinator.active) {
                     Icon(
                         Icons.Default.KeyboardArrowUp,
                         "Swipe up for other channels",
@@ -967,7 +1090,7 @@ internal fun LiveChannelPreview(
                             .size(22.dp)
                     )
                 }
-                if (stripExpanded && channelList.size > 1) {
+                if (stripExpanded && channelList.size > 1 && !PictureInPictureCoordinator.active) {
                     Column(
                         Modifier.align(Alignment.BottomCenter)
                             .then(if (fullscreen || hostedFullscreen) Modifier.navigationBarsPadding() else Modifier)

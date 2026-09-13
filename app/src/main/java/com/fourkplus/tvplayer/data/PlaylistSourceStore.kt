@@ -15,6 +15,11 @@ internal class PlaylistSourceStore(context: Context) {
         EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM
     )
 
+    // Sources only ever enter this store already validated — either through the manual/login UI's
+    // own ApprovedServers.allows() check, or via the trusted device-activation backend, which
+    // deliberately resolves to servers *outside* that allowlist (that's the point of activation).
+    // Re-applying the allowlist here would silently drop legitimately-saved activation sources on
+    // every read, so reads trust whatever was written rather than re-validating it.
     fun savedSources(): List<PlaylistInput> {
         val stored = preferences.getString("sources_json", null)
         if (!stored.isNullOrBlank()) {
@@ -35,9 +40,9 @@ internal class PlaylistSourceStore(context: Context) {
                         )
                     }
                 }
-            }.getOrDefault(emptyList()).filter(ApprovedServers::allows)
+            }.getOrDefault(emptyList())
         }
-        val legacy = legacySavedSource()?.takeIf(ApprovedServers::allows) ?: return emptyList()
+        val legacy = legacySavedSource() ?: return emptyList()
         writeSources(listOf(legacy), legacy.sourceId())
         return listOf(legacy)
     }

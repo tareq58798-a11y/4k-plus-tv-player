@@ -70,6 +70,21 @@ data class SeriesEpisode(
     val description: String? = null
 )
 
+/** One programme entry from a provider's EPG (electronic programme guide), in absolute epoch
+ *  seconds so on-screen "now" comparisons don't depend on the provider's own timezone. */
+data class EpgProgram(
+    val title: String,
+    val startEpochSeconds: Long,
+    val endEpochSeconds: Long
+)
+
+/** The currently-airing and up-next programme for one live channel, resolved against the current
+ *  time — either may be null if the guide has a gap or the provider returned nothing usable. */
+data class EpgNowNext(
+    val now: EpgProgram? = null,
+    val next: EpgProgram? = null
+)
+
 data class SeriesDetailsInfo(
     val originalTitle: String? = null,
     val description: String? = null,

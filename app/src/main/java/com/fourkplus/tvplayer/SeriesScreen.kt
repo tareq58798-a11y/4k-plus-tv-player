@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,18 +39,23 @@ import androidx.compose.ui.window.Dialog
 import coil.compose.AsyncImage
 import com.fourkplus.tvplayer.data.LoadedPlaylist
 import com.fourkplus.tvplayer.data.MediaKind
+import com.fourkplus.tvplayer.data.PlaylistInput
 import com.fourkplus.tvplayer.data.PlaylistItem
+import com.fourkplus.tvplayer.data.PlaylistKind
 import com.fourkplus.tvplayer.data.SeriesDetailsInfo
 import com.fourkplus.tvplayer.data.SeriesEpisode
 import com.fourkplus.tvplayer.ui.theme.*
 
 private enum class SeriesView { BROWSE, CATEGORY, DETAILS, PLAYER }
+private val seasonEpisodePattern = Regex("s(\\d{1,2})[\\s._-]*e(\\d{1,3})", RegexOption.IGNORE_CASE)
 
 @Composable
 internal fun SeriesScreen(
     playlist: LoadedPlaylist?,
     loadDetails: suspend (PlaylistItem) -> Result<SeriesDetailsInfo>,
+    source: PlaylistInput?,
     onBack: () -> Unit,
+    requirePin: (() -> Unit) -> Unit,
     resumeRequest: ResumeRequest? = null,
     onResumeHandled: () -> Unit = {}
 ) {
@@ -58,6 +64,7 @@ internal fun SeriesScreen(
     var hiddenCategories by remember {
         mutableStateOf(parental.getStringSet("hidden_series_categories", emptySet()).orEmpty().toSet())
     }
+    val lockedCategories = remember { parental.getStringSet("locked_series_categories", emptySet()).orEmpty().toSet() }
     val seriesItems = remember(playlist, hiddenCategories) {
         playlist?.items?.filter { it.kind == MediaKind.SERIES && it.group !in hiddenCategories }.orEmpty()
     }
@@ -103,6 +110,32 @@ internal fun SeriesScreen(
         val updated = if (id in favoriteIds) favoriteIds - id else favoriteIds + id
         favoriteIds = updated
         store.edit().putStringSet("favorites", updated).apply()
+    }
+
+    // M3U playlists (including MAC-activation accounts that resolve to an M3U link rather than
+    // Xtream) list every episode as its own flat entry instead of a series+episode API hierarchy,
+    // so there is no series_id to fetch episodes from. Synthesize the season/episode breakdown
+    // from sibling entries sharing the same group instead of calling the Xtream-only endpoint.
+    fun buildLocalSeriesDetails(series: PlaylistItem): SeriesDetailsInfo {
+        val siblings = seriesItems.filter { it.group == series.group }
+        val episodes = siblings.mapIndexed { index, item ->
+            val match = seasonEpisodePattern.find(item.name)
+            val season = match?.groupValues?.get(1)?.toIntOrNull() ?: 1
+            val episodeNumber = match?.groupValues?.get(2)?.toIntOrNull() ?: (index + 1)
+            val title = match?.let { item.name.removeRange(it.range).trim(' ', '-', '.', '_', ':') }
+                ?.ifBlank { item.name } ?: item.name
+            SeriesEpisode(
+                id = item.streamUrl,
+                seasonNumber = season,
+                episodeNumber = episodeNumber,
+                title = title,
+                streamUrl = item.streamUrl,
+                thumbnailUrl = item.logoUrl,
+                duration = item.duration,
+                description = item.description
+            )
+        }.sortedWith(compareBy({ it.seasonNumber }, { it.episodeNumber }))
+        return SeriesDetailsInfo(posterUrl = series.logoUrl, episodes = episodes)
     }
 
     fun episodePlaylistItem(series: PlaylistItem, episode: SeriesEpisode) = PlaylistItem(
@@ -165,15 +198,22 @@ internal fun SeriesScreen(
     LaunchedEffect(selectedSeries, view) {
         val series = selectedSeries
         if (series != null && view == SeriesView.DETAILS && details == null && !detailsLoading) {
-            detailsLoading = true
-            loadDetails(series)
-                .onSuccess { loaded ->
-                    details = loaded
-                    val available = loaded.seasons
-                    if (selectedSeason !in available) selectedSeason = available.firstOrNull() ?: 1
-                }
-                .onFailure { detailsError = it.message }
-            detailsLoading = false
+            if (source == null || source.kind == PlaylistKind.PROVIDER_LOGIN) {
+                detailsLoading = true
+                loadDetails(series)
+                    .onSuccess { loaded ->
+                        details = loaded
+                        val available = loaded.seasons
+                        if (selectedSeason !in available) selectedSeason = available.firstOrNull() ?: 1
+                    }
+                    .onFailure { detailsError = it.message }
+                detailsLoading = false
+            } else {
+                val loaded = buildLocalSeriesDetails(series)
+                details = loaded
+                val available = loaded.seasons
+                if (selectedSeason !in available) selectedSeason = available.firstOrNull() ?: 1
+            }
         }
     }
 
@@ -206,18 +246,41 @@ internal fun SeriesScreen(
         onResumeHandled()
     }
 
-    BoxWithConstraints(
-        Modifier.fillMaxSize().background(
-            Brush.verticalGradient(
-                listOf(
-                    MaterialTheme.colorScheme.background,
-                    MaterialTheme.colorScheme.background,
-                    MaterialTheme.colorScheme.primary.copy(alpha = .10f)
-                )
-            )
-        )
-    ) {
+    // No background fill: the themed backdrop is painted app-wide behind the Scaffold in MainActivity.
+    BoxWithConstraints(Modifier.fillMaxSize()) {
         val landscape = maxWidth > maxHeight
+        // Rendered here, above the landscape/portrait split, as a single orientation- and
+        // layout-independent overlay so its call site never changes position in the
+        // composition — required both to keep the player instance alive across rotation and
+        // for picture-in-picture (which needs the video to fill the Activity's own window).
+        if (view == SeriesView.PLAYER) {
+            val series = selectedSeries
+            val episode = selectedEpisode
+            if (series != null && episode != null) {
+                val allEpisodes = details?.episodes.orEmpty()
+                val relatedItems = remember(series, allEpisodes) {
+                    allEpisodes.map { episodePlaylistItem(series, it) }
+                }
+                MoviePlayer(
+                    movie = episodePlaylistItem(series, episode),
+                    startPosition = progress[episode.id] ?: 0L,
+                    onProgress = { position, duration ->
+                        saveEpisodeProgress(series, episode, position, duration)
+                    },
+                    onExit = { view = SeriesView.DETAILS },
+                    modifier = Modifier.fillMaxSize(),
+                    relatedItems = relatedItems,
+                    onRelatedItemChange = { item ->
+                        allEpisodes.firstOrNull { it.id == item.channelId }?.let { next ->
+                            selectedEpisode = next
+                            selectedSeason = next.seasonNumber
+                            recordRecent(series)
+                        }
+                    }
+                )
+            }
+            return@BoxWithConstraints
+        }
         if (landscape && view in setOf(SeriesView.BROWSE, SeriesView.CATEGORY)) {
             LandscapeSeriesBrowser(
                 seriesItems = seriesItems,
@@ -228,7 +291,10 @@ internal fun SeriesScreen(
                 recent = recent,
                 favorites = favorites,
                 continueWatching = continueWatching,
-                onCategory = { selectedCategory = it; search = ""; view = SeriesView.CATEGORY },
+                onCategory = { category ->
+                    fun enter() { selectedCategory = category; search = ""; view = SeriesView.CATEGORY }
+                    if (category in lockedCategories) requirePin(::enter) else enter()
+                },
                 onSearch = { search = it },
                 onFavorite = ::toggleFavorite,
                 onSeries = ::openDetails,
@@ -249,12 +315,12 @@ internal fun SeriesScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = ::goBack) { Icon(Icons.Default.ArrowBack, "Back") }
+                AnimatedIconButton(onClick = ::goBack) { Icon(Icons.Default.ArrowBack, stringResource(R.string.cd_back)) }
                 Text(
                     when (view) {
-                        SeriesView.BROWSE -> "Series"
-                        SeriesView.CATEGORY -> selectedCategory
-                        else -> details?.originalTitle ?: selectedSeries?.name ?: "Series"
+                        SeriesView.BROWSE -> stringResource(R.string.nav_series)
+                        SeriesView.CATEGORY -> localizedSectionTitle(selectedCategory)
+                        else -> details?.originalTitle ?: selectedSeries?.name ?: stringResource(R.string.nav_series)
                     },
                     modifier = Modifier.weight(1f),
                     fontSize = if (landscape) 23.sp else 22.sp,
@@ -270,14 +336,14 @@ internal fun SeriesScreen(
                     }) {
                         Icon(Icons.Default.VisibilityOff, null)
                         Spacer(Modifier.width(5.dp))
-                        Text("Hide")
+                        Text(stringResource(R.string.action_hide))
                     }
                 }
                 if (view == SeriesView.DETAILS && selectedSeries != null) {
-                    IconButton(onClick = { toggleFavorite(selectedSeries!!) }) {
+                    AnimatedIconButton(onClick = { toggleFavorite(selectedSeries!!) }) {
                         Icon(
                             if (channelKey(selectedSeries!!) in favoriteIds) Icons.Default.Star else Icons.Default.StarBorder,
-                            "Favorite",
+                            if (channelKey(selectedSeries!!) in favoriteIds) stringResource(R.string.cd_favorite_remove) else stringResource(R.string.cd_favorite_add),
                             tint = if (channelKey(selectedSeries!!) in favoriteIds) Orange else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -299,7 +365,7 @@ internal fun SeriesScreen(
                         }
                         if (sections.isEmpty()) {
                             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                Text("No series were found.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.no_series_found), color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         } else {
                             LazyColumn(
@@ -312,7 +378,10 @@ internal fun SeriesScreen(
                                         title = title,
                                         seriesItems = sectionItems,
                                         favoriteIds = favoriteIds,
-                                        onSeeAll = { selectedCategory = title; view = SeriesView.CATEGORY },
+                                        onSeeAll = {
+                                            fun enter() { selectedCategory = title; view = SeriesView.CATEGORY }
+                                            if (title in lockedCategories) requirePin(::enter) else enter()
+                                        },
                                         onHide = if (title in setOf("Continue watching", "Recently watched", "Favorites")) null else {{
                                             val updated = hiddenCategories + title
                                             hiddenCategories = updated
@@ -362,34 +431,9 @@ internal fun SeriesScreen(
                         modifier = Modifier.weight(1f)
                     )
                 }
-
-                SeriesView.PLAYER -> {
-                    val series = selectedSeries
-                    val episode = selectedEpisode
-                    if (series != null && episode != null) {
-                        val allEpisodes = details?.episodes.orEmpty()
-                        val relatedItems = remember(series, allEpisodes) {
-                            allEpisodes.map { episodePlaylistItem(series, it) }
-                        }
-                        MoviePlayer(
-                            movie = episodePlaylistItem(series, episode),
-                            startPosition = progress[episode.id] ?: 0L,
-                            onProgress = { position, duration ->
-                                saveEpisodeProgress(series, episode, position, duration)
-                            },
-                            onExit = { view = SeriesView.DETAILS },
-                            modifier = Modifier.weight(1f),
-                            relatedItems = relatedItems,
-                            onRelatedItemChange = { item ->
-                                allEpisodes.firstOrNull { it.id == item.channelId }?.let { next ->
-                                    selectedEpisode = next
-                                    selectedSeason = next.seasonNumber
-                                    recordRecent(series)
-                                }
-                            }
-                        )
-                    }
-                }
+                // Rendered as a full-screen overlay above this BoxWithConstraints instead
+                // (see the early return at the top of it) — see comment there for why.
+                SeriesView.PLAYER -> Unit
             }
         }
     }
@@ -433,8 +477,8 @@ private fun LandscapeSeriesBrowser(
         ) {
             Column(Modifier.fillMaxSize().padding(9.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, "Back") }
-                    Text("Series", fontSize = 19.sp, fontWeight = FontWeight.Black)
+                    AnimatedIconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, stringResource(R.string.cd_back)) }
+                    Text(stringResource(R.string.nav_series), fontSize = 19.sp, fontWeight = FontWeight.Black)
                 }
                 SeriesSearch(search, onSearch)
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -446,10 +490,10 @@ private fun LandscapeSeriesBrowser(
                             color = if (category == selectedCategory) Cyan.copy(alpha = .24f) else Color.Transparent
                         ) {
                             Row(Modifier.padding(start = 12.dp, top = 7.dp, bottom = 7.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(category, Modifier.weight(1f), maxLines = 1, fontWeight = if (category == selectedCategory) FontWeight.Bold else FontWeight.Normal)
+                                Text(localizedSectionTitle(category), Modifier.weight(1f), maxLines = 1, fontWeight = if (category == selectedCategory) FontWeight.Bold else FontWeight.Normal)
                                 if (category !in special) {
-                                    IconButton(onClick = { onHide(category) }, modifier = Modifier.size(32.dp)) {
-                                        Icon(Icons.Default.VisibilityOff, "Hide $category", modifier = Modifier.size(18.dp))
+                                    AnimatedIconButton(onClick = { onHide(category) }, modifier = Modifier.size(32.dp)) {
+                                        Icon(Icons.Default.VisibilityOff, stringResource(R.string.cd_hide_category, category), modifier = Modifier.size(18.dp))
                                     }
                                 }
                             }
@@ -459,7 +503,7 @@ private fun LandscapeSeriesBrowser(
             }
         }
         Column(Modifier.weight(1f).fillMaxHeight()) {
-            Text(selectedCategory.ifBlank { "Series" }, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1)
+            Text(localizedSectionTitle(selectedCategory).ifBlank { stringResource(R.string.nav_series) }, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1)
             Spacer(Modifier.height(6.dp))
             SeriesGrid(displayed, favoriteIds, onFavorite, onSeries, Modifier.weight(1f), true)
         }
@@ -474,11 +518,11 @@ private fun SeriesSearch(value: String, onChange: (String) -> Unit) {
         modifier = Modifier.fillMaxWidth(),
         singleLine = true,
         shape = RoundedCornerShape(15.dp),
-        placeholder = { Text("Search all series") },
+        placeholder = { Text(stringResource(R.string.search_all_series)) },
         leadingIcon = { Icon(Icons.Default.Search, null) },
         trailingIcon = {
-            if (value.isNotEmpty()) IconButton(onClick = { onChange("") }) {
-                Icon(Icons.Default.Close, "Clear")
+            if (value.isNotEmpty()) AnimatedIconButton(onClick = { onChange("") }) {
+                Icon(Icons.Default.Close, stringResource(R.string.cd_clear))
             }
         }
     )
@@ -496,14 +540,14 @@ private fun SeriesShelf(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(title, Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+            Text(localizedSectionTitle(title), Modifier.weight(1f), fontSize = 18.sp, fontWeight = FontWeight.Bold, maxLines = 1)
             onHide?.let {
-                IconButton(onClick = it, modifier = Modifier.size(36.dp)) {
-                    Icon(Icons.Default.VisibilityOff, "Hide $title", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                AnimatedIconButton(onClick = it, modifier = Modifier.size(36.dp)) {
+                    Icon(Icons.Default.VisibilityOff, stringResource(R.string.cd_hide_category, localizedSectionTitle(title)), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             TextButton(onClick = onSeeAll) {
-                Text("See all", color = Cyan)
+                Text(stringResource(R.string.action_see_all), color = Cyan)
                 Icon(Icons.Default.ChevronRight, null, tint = Cyan)
             }
         }
@@ -512,7 +556,7 @@ private fun SeriesShelf(
                 item {
                     Surface(color = MaterialTheme.colorScheme.surface.copy(alpha = .72f), shape = RoundedCornerShape(13.dp)) {
                         Text(
-                            if (title == "Favorites") "Series you star will appear here." else "Series you watch will appear here.",
+                            if (title == "Favorites") stringResource(R.string.series_star_empty) else stringResource(R.string.series_watch_empty),
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 16.dp, vertical = 20.dp)
                         )
@@ -544,7 +588,7 @@ private fun SeriesGrid(
 ) {
     if (seriesItems.isEmpty()) {
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Text("No series match your search.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.no_series_match), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     } else {
         LazyVerticalGrid(
@@ -586,14 +630,14 @@ private fun SeriesPoster(
                 if (!series.logoUrl.isNullOrBlank()) {
                     AsyncImage(series.logoUrl, series.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 }
-                IconButton(
+                AnimatedIconButton(
                     onClick = onFavorite,
                     modifier = Modifier.align(Alignment.TopEnd).size(34.dp)
                         .background(Color.Black.copy(alpha = .55f), RoundedCornerShape(10.dp))
                 ) {
                     Icon(
                         if (favorite) Icons.Default.Star else Icons.Default.StarBorder,
-                        "Favorite",
+                        if (favorite) stringResource(R.string.cd_favorite_remove) else stringResource(R.string.cd_favorite_add),
                         tint = if (favorite) Orange else Color.White,
                         modifier = Modifier.size(19.dp)
                     )
@@ -626,6 +670,7 @@ private fun SeriesDetails(
     val seasons = details?.seasons.orEmpty()
     val displayTitle = details?.originalTitle ?: series.name
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val trailerSearchTerm = stringResource(R.string.trailer_search_term)
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(if (landscape) 8.dp else 14.dp)
@@ -680,7 +725,7 @@ private fun SeriesDetails(
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(
                 onClick = {
-                    val query = listOfNotNull(details?.originalTitle ?: series.name, details?.year, "official trailer")
+                    val query = listOfNotNull(details?.originalTitle ?: series.name, details?.year, trailerSearchTerm)
                         .joinToString(" ")
                     val uri = Uri.parse("https://www.youtube.com/results").buildUpon()
                         .appendQueryParameter("search_query", query).build()
@@ -690,29 +735,29 @@ private fun SeriesDetails(
             ) {
                 Icon(Icons.Default.SmartDisplay, null)
                 Spacer(Modifier.width(7.dp))
-                Text("Trailer")
+                Text(stringResource(R.string.trailer_label))
             }
-            FilledTonalIconButton(onClick = onFavorite, modifier = Modifier.size(52.dp)) {
-                Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, "Favorite", tint = if (favorite) Orange else Cyan)
+            AnimatedFilledTonalIconButton(onClick = onFavorite, modifier = Modifier.size(52.dp)) {
+                Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, if (favorite) stringResource(R.string.cd_favorite_remove) else stringResource(R.string.cd_favorite_add), tint = if (favorite) Orange else Cyan)
             }
         }
 
         if (loading) {
             LinearProgressIndicator(Modifier.fillMaxWidth())
-            Text("Loading seasons and episodes…", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.loading_seasons_episodes), color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             Text(
                 details?.description?.takeIf(String::isNotBlank)
-                    ?: "Detailed information was not supplied for this series.",
+                    ?: stringResource(R.string.no_series_details),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontSize = 15.sp,
                 lineHeight = 22.sp
             )
-            details?.cast?.takeIf(String::isNotBlank)?.let { SeriesCredit(Icons.Default.Groups, "Cast", it) }
-            details?.director?.takeIf(String::isNotBlank)?.let { SeriesCredit(Icons.Default.MovieCreation, "Director", it) }
+            details?.cast?.takeIf(String::isNotBlank)?.let { SeriesCredit(Icons.Default.Groups, stringResource(R.string.cast_label), it) }
+            details?.director?.takeIf(String::isNotBlank)?.let { SeriesCredit(Icons.Default.MovieCreation, stringResource(R.string.director_label), it) }
 
             if (seasons.isNotEmpty()) {
-                Text("Seasons", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.seasons_label), fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 Row(
                     Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -721,11 +766,11 @@ private fun SeriesDetails(
                         FilterChip(
                             selected = selectedSeason == season,
                             onClick = { onSeason(season) },
-                            label = { Text("Season $season") }
+                            label = { Text(stringResource(R.string.season_number, season)) }
                         )
                     }
                 }
-                Text("Episodes", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.episodes_label), fontSize = 20.sp, fontWeight = FontWeight.Bold)
                 episodes.forEach { episode ->
                     EpisodeRow(
                         episode = episode,
@@ -734,9 +779,9 @@ private fun SeriesDetails(
                     )
                 }
             } else if (error != null) {
-                Text("Episodes are unavailable from this playlist.", color = MaterialTheme.colorScheme.error)
+                Text(stringResource(R.string.episodes_unavailable), color = MaterialTheme.colorScheme.error)
             } else {
-                Text("No episodes were supplied for this series.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.no_episodes_supplied), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -767,19 +812,20 @@ private fun EpisodeRow(episode: SeriesEpisode, progress: Long, onClick: () -> Un
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(
-                    "E${episode.episodeNumber} • ${episode.title}",
+                    stringResource(R.string.episode_title_format, episode.episodeNumber, episode.title),
                     fontWeight = FontWeight.Bold,
                     maxLines = 3
                 )
+                val resumeLabel = stringResource(R.string.resume_time, seriesProgressTime(progress))
                 val detail = buildList {
                     episode.duration?.takeIf(String::isNotBlank)?.let(::add)
-                    if (progress > 0L) add("Resume ${seriesProgressTime(progress)}")
+                    if (progress > 0L) add(resumeLabel)
                 }.joinToString(" • ")
                 if (detail.isNotBlank()) {
                     Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                 }
             }
-            Icon(Icons.Default.PlayArrow, "Play", tint = Cyan)
+            Icon(Icons.Default.PlayArrow, stringResource(R.string.play_action), tint = Cyan)
         }
     }
 }

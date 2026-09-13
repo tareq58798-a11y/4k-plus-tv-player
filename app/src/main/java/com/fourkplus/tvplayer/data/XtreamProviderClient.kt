@@ -4,6 +4,7 @@ import java.io.IOException
 import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -124,6 +125,40 @@ internal class XtreamProviderClient {
             }
         }
         throw lastError ?: IllegalArgumentException("Series information could not be loaded.")
+    }
+
+    /** Xtream's "short EPG" for one channel: a handful of upcoming programme entries starting
+     *  from roughly now. Callers resolve which entry is "current" vs "next" themselves, since
+     *  panels vary on whether the in-progress programme is included. */
+    suspend fun shortEpg(source: PlaylistInput, channelId: String): List<EpgProgram> = withContext(Dispatchers.IO) {
+        var lastError: Exception? = null
+        for (server in addressCandidates(source.address).map(::normalizeServerBase)) {
+            try {
+                val url = apiUrl(server, source, "get_short_epg") + "&stream_id=${encode(channelId)}&limit=4"
+                val root = JSONObject(download(url))
+                val listings = root.optJSONArray("epg_listings") ?: JSONArray()
+                return@withContext buildList {
+                    for (index in 0 until listings.length()) {
+                        val entry = listings.optJSONObject(index) ?: continue
+                        val title = decodeEpgText(entry.optString("title")) ?: continue
+                        val start = entry.optString("start_timestamp").toLongOrNull() ?: continue
+                        val end = entry.optString("stop_timestamp").toLongOrNull() ?: continue
+                        if (end <= start) continue
+                        add(EpgProgram(title, start, end))
+                    }
+                }.sortedBy { it.startEpochSeconds }
+            } catch (error: Exception) { lastError = error }
+        }
+        throw lastError ?: IllegalArgumentException("Programme information could not be loaded.")
+    }
+
+    /** Xtream typically base64-encodes EPG text fields, but some panels send plain text — fall
+     *  back to the raw value rather than dropping the entry if decoding doesn't look right. */
+    private fun decodeEpgText(value: String): String? {
+        val trimmed = value.trim()
+        if (trimmed.isBlank()) return null
+        val decoded = runCatching { String(Base64.getDecoder().decode(trimmed), StandardCharsets.UTF_8).trim() }.getOrNull()
+        return decoded?.takeIf(String::isNotBlank) ?: trimmed
     }
 
     private fun loadM3u(input: PlaylistInput): LoadedPlaylist {
