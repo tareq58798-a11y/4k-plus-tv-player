@@ -1403,7 +1403,7 @@ private val LiveCardPalette = listOf(BrandBlue, Orange, Cyan, DeepBlue)
 private fun RecentLiveCard(
     item: PlaylistItem,
     previewUrl: String?,
-    width: Dp = 132.dp,
+    width: Dp = 104.dp,
     /** Landscape gives the shelf a fixed height, so let the thumbnail absorb the slack instead of
      *  deriving card height from width — otherwise the title and LIVE row get clipped. */
     fillHeight: Boolean = false,
@@ -1457,13 +1457,6 @@ private fun RecentLiveCard(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
             Box(Modifier.size(6.dp).clip(CircleShape).background(Color(0xFFFF3B3B)))
             Text(stringResource(R.string.home_live_badge), fontSize = 10.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onBackground)
-            Text(
-                item.group,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1
-            )
         }
     }
 }
