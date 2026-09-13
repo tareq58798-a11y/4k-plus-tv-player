@@ -1567,7 +1567,7 @@ private fun MoviesScreen(
     val categories = remember(movies) { movies.map { it.group }.distinct() }
     val store = remember { context.getSharedPreferences("movie_library", android.content.Context.MODE_PRIVATE) }
     var view by remember { mutableStateOf(MovieView.BROWSE) }
-    var selectedCategory by remember { mutableStateOf(categories.firstOrNull().orEmpty()) }
+    var selectedCategory by remember { mutableStateOf("Continue watching") }
     var selectedMovie by remember { mutableStateOf<PlaylistItem?>(null) }
     var details by remember { mutableStateOf<MovieDetailsInfo?>(null) }
     var detailsLoading by remember { mutableStateOf(false) }
@@ -1704,6 +1704,7 @@ private fun MoviesScreen(
                     recent = recent,
                     favorites = favorites,
                     continueWatching = continueWatching,
+                    progress = progress,
                     onCategory = { category ->
                         fun enter() { selectedCategory = category; search = ""; view = MovieView.CATEGORY }
                         if (category in lockedCategories) requirePin(::enter) else enter()
@@ -1770,7 +1771,7 @@ private fun MoviesScreen(
                         SearchField(search, { search = it }, stringResource(R.string.search_all_movies))
                         if (search.isNotBlank()) {
                             val results = remember(movies, search) { movies.filter { it.name.contains(search.trim(), true) } }
-                            MovieGrid(results, favoriteIds, ::toggleFavorite, ::openDetails, Modifier.weight(1f), landscape)
+                            MovieGrid(results, favoriteIds, ::toggleFavorite, ::openDetails, Modifier.weight(1f), landscape, progress)
                         } else {
                             val sections = buildList {
                                 if (continueWatching.isNotEmpty()) add("Continue watching" to continueWatching)
@@ -1799,7 +1800,8 @@ private fun MoviesScreen(
                                                 parental.edit().putStringSet("hidden_movie_categories", updated).apply()
                                             }},
                                             onFavorite = ::toggleFavorite,
-                                            onMovie = ::openDetails
+                                            onMovie = ::openDetails,
+                                            progress = progress
                                         )
                                     }
                                 }
@@ -1815,7 +1817,7 @@ private fun MoviesScreen(
                             else -> movies.filter { it.group == selectedCategory }
                         }
                         val results = if (search.isBlank()) base else movies.filter { it.name.contains(search.trim(), true) }
-                        MovieGrid(results, favoriteIds, ::toggleFavorite, ::openDetails, Modifier.weight(1f), landscape)
+                        MovieGrid(results, favoriteIds, ::toggleFavorite, ::openDetails, Modifier.weight(1f), landscape, progress)
                     }
                     MovieView.DETAILS -> selectedMovie?.let { movie ->
                         MovieDetails(
@@ -1854,7 +1856,8 @@ private fun LandscapeMovieBrowser(
     onFavorite: (PlaylistItem) -> Unit,
     onMovie: (PlaylistItem) -> Unit,
     onHide: (String) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    progress: Map<String, Long> = emptyMap()
 ) {
     val special = listOf("Continue watching", "Recently watched", "Favorites")
     val allCategories = special + categories
@@ -1888,9 +1891,9 @@ private fun LandscapeMovieBrowser(
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     items(allCategories) { category ->
                         Surface(
-                            onClick = { onCategory(category) },
                             modifier = Modifier.fillMaxWidth()
-                                .then(if (category == "Continue watching") Modifier.focusRequester(continueWatchingFocusRequester) else Modifier),
+                                .then(if (category == "Continue watching") Modifier.focusRequester(continueWatchingFocusRequester) else Modifier)
+                                .focusableClickable(cornerRadius = 11.dp) { onCategory(category) },
                             shape = RoundedCornerShape(11.dp),
                             color = if (category == selectedCategory) Cyan.copy(alpha = .24f) else Color.Transparent
                         ) {
@@ -1910,7 +1913,7 @@ private fun LandscapeMovieBrowser(
         Column(Modifier.weight(1f).fillMaxHeight()) {
             Text(localizedSectionTitle(selectedCategory).ifBlank { stringResource(R.string.nav_movies) }, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1)
             Spacer(Modifier.height(6.dp))
-            MovieGrid(displayed, favoriteIds, onFavorite, onMovie, Modifier.weight(1f), true)
+            MovieGrid(displayed, favoriteIds, onFavorite, onMovie, Modifier.weight(1f), true, progress)
         }
     }
 }
@@ -2102,7 +2105,8 @@ private fun MovieShelf(
     onSeeAll: () -> Unit,
     onHide: (() -> Unit)?,
     onFavorite: (PlaylistItem) -> Unit,
-    onMovie: (PlaylistItem) -> Unit
+    onMovie: (PlaylistItem) -> Unit,
+    progress: Map<String, Long> = emptyMap()
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -2127,7 +2131,7 @@ private fun MovieShelf(
                 }
             } else {
                 items(movies.take(16)) { movie ->
-                    MoviePoster(movie, channelKey(movie) in favoriteIds, { onFavorite(movie) }, { onMovie(movie) }, Modifier.width(128.dp))
+                    MoviePoster(movie, channelKey(movie) in favoriteIds, { onFavorite(movie) }, { onMovie(movie) }, Modifier.width(128.dp), watchedFraction(movie, progress))
                 }
             }
         }
@@ -2141,7 +2145,8 @@ private fun MovieGrid(
     onFavorite: (PlaylistItem) -> Unit,
     onMovie: (PlaylistItem) -> Unit,
     modifier: Modifier,
-    landscape: Boolean
+    landscape: Boolean,
+    progress: Map<String, Long> = emptyMap()
 ) {
     if (movies.isEmpty()) {
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.no_movies_match), color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -2152,7 +2157,7 @@ private fun MovieGrid(
             contentPadding = PaddingValues(bottom = 20.dp)
         ) {
             gridItems(movies) { movie ->
-                MoviePoster(movie, channelKey(movie) in favoriteIds, { onFavorite(movie) }, { onMovie(movie) })
+                MoviePoster(movie, channelKey(movie) in favoriteIds, { onFavorite(movie) }, { onMovie(movie) }, watchedFraction = watchedFraction(movie, progress))
             }
         }
     }
@@ -2164,7 +2169,8 @@ private fun MoviePoster(
     favorite: Boolean,
     onFavorite: () -> Unit,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    watchedFraction: Float? = null
 ) {
     Column(modifier.clip(RoundedCornerShape(14.dp)).focusableClickable(cornerRadius = 14.dp, onClick = onClick)) {
         Surface(
@@ -2175,6 +2181,13 @@ private fun MoviePoster(
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Icon(Icons.Default.Movie, null, tint = Orange.copy(alpha = .5f), modifier = Modifier.size(38.dp))
                 if (!movie.logoUrl.isNullOrBlank()) AsyncImage(movie.logoUrl, movie.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                // YouTube-style watched indicator: a red strip along the bottom edge sized to how
+                // far into the movie the user got.
+                if (watchedFraction != null) {
+                    Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = .35f))) {
+                        Box(Modifier.fillMaxHeight().fillMaxWidth(watchedFraction).background(Color(0xFFE50914)))
+                    }
+                }
                 AnimatedIconButton(
                     onClick = onFavorite,
                     modifier = Modifier.align(Alignment.TopEnd).size(34.dp).background(Color.Black.copy(alpha = .55f), RoundedCornerShape(10.dp))
@@ -2214,31 +2227,100 @@ private fun MovieDetails(
     val duration = readableMovieDuration(details?.duration ?: movie.duration)
     val displayTitle = details?.originalTitle ?: movie.name
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val trailerQuery = listOfNotNull(details?.originalTitle ?: movie.name, year, "official trailer").joinToString(" ")
+
+    if (landscape) {
+        // TV has the full screen width to work with, so poster/actions/pills sit in a fixed-width
+        // left column instead of stacked above a single scrolling column — the same content used
+        // to run the full width of the screen in one long strip.
+        Row(modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column(Modifier.width(200.dp).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    Modifier.fillMaxWidth().aspectRatio(2f / 3f),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shadowElevation = 12.dp,
+                    border = BorderStroke(2.dp, Color.White.copy(alpha = .18f))
+                ) {
+                    if (!poster.isNullOrBlank()) AsyncImage(poster, movie.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                }
+                Button(onClick = onPlay, modifier = Modifier.fillMaxWidth().height(46.dp)) {
+                    Icon(if (resumePosition > 0L) Icons.Default.Replay else Icons.Default.PlayArrow, null)
+                    Spacer(Modifier.width(7.dp))
+                    Text(if (resumePosition > 0L) stringResource(R.string.resume_time, formatPlaybackTime(resumePosition)) else stringResource(R.string.play_action))
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { openTrailer(context, details?.trailerUrl, trailerQuery) }, modifier = Modifier.weight(1f).height(44.dp)) {
+                        Icon(Icons.Default.SmartDisplay, null)
+                    }
+                    AnimatedFilledTonalIconButton(onClick = onFavorite, modifier = Modifier.size(44.dp)) {
+                        Icon(
+                            if (favorite) Icons.Default.Star else Icons.Default.StarBorder,
+                            if (favorite) stringResource(R.string.cd_favorite_remove) else stringResource(R.string.cd_favorite_add),
+                            tint = if (favorite) Orange else Cyan
+                        )
+                    }
+                }
+                FlowRowPills {
+                    rating?.let { MovieInfoPill("★ $it/10", Orange) }
+                    year?.takeIf(String::isNotBlank)?.let { MovieInfoPill(it, Cyan) }
+                    duration?.let { MovieInfoPill(it, BrandBlue) }
+                    details?.genre?.takeIf(String::isNotBlank)?.let { MovieInfoPill(it, Cyan) }
+                    MovieInfoPill(movie.group, BrandBlue)
+                }
+            }
+            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(displayTitle, fontSize = 24.sp, fontWeight = FontWeight.Black, lineHeight = 28.sp)
+                if (!details?.originalTitle.isNullOrBlank() && details?.originalTitle != movie.name) {
+                    Text(movie.name, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, maxLines = 2)
+                }
+                if (loading) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text(stringResource(R.string.loading_movie_info), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Text(
+                        description?.takeIf(String::isNotBlank) ?: stringResource(R.string.no_movie_details),
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    details?.cast?.takeIf(String::isNotBlank)?.let { MovieCreditRow(Icons.Default.Groups, stringResource(R.string.cast_label), it) }
+                    details?.director?.takeIf(String::isNotBlank)?.let { MovieCreditRow(Icons.Default.MovieCreation, stringResource(R.string.director_label), it) }
+                    if (detailsError != null && description.isNullOrBlank() && details?.cast.isNullOrBlank()) {
+                        Text(stringResource(R.string.no_additional_info), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                    }
+                }
+                Spacer(Modifier.height(22.dp))
+            }
+        }
+        return
+    }
+
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(if (landscape) 8.dp else 14.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Surface(
-            Modifier.fillMaxWidth().then(if (landscape) Modifier.height(118.dp) else Modifier.aspectRatio(16f / 9f)),
-            shape = RoundedCornerShape(if (landscape) 14.dp else 20.dp),
-            color = if (landscape) Color.Black.copy(alpha = .28f) else Color.Black,
+            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+            shape = RoundedCornerShape(20.dp),
+            color = Color.Black,
             shadowElevation = 10.dp
         ) {
             Box(Modifier.fillMaxSize()) {
-                if (!landscape && !backdrop.isNullOrBlank()) {
+                if (!backdrop.isNullOrBlank()) {
                     AsyncImage(backdrop, movie.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 }
-                if (!landscape) Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .88f)))))
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .88f)))))
                 Text(
                     displayTitle,
                     color = Color.White,
                     fontSize = 21.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 2,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(start = if (landscape) 98.dp else 132.dp, end = 14.dp, bottom = if (landscape) 36.dp else 16.dp)
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 132.dp, end = 14.dp, bottom = 16.dp)
                 )
                 Surface(
-                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(if (landscape) 70.dp else 104.dp).aspectRatio(2f / 3f),
+                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(104.dp).aspectRatio(2f / 3f),
                     shape = RoundedCornerShape(13.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shadowElevation = 12.dp,
@@ -2280,12 +2362,7 @@ private fun MovieDetails(
             }
         }
         OutlinedButton(
-            onClick = {
-                val query = listOfNotNull(details?.originalTitle ?: movie.name, year, "official trailer").joinToString(" ")
-                val trailerSearch = Uri.parse("https://www.youtube.com/results").buildUpon()
-                    .appendQueryParameter("search_query", query).build()
-                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, trailerSearch)) }
-            },
+            onClick = { openTrailer(context, details?.trailerUrl, trailerQuery) },
             modifier = Modifier.fillMaxWidth()
         ) {
             Icon(Icons.Default.SmartDisplay, null)
@@ -2312,6 +2389,17 @@ private fun MovieDetails(
         }
         Spacer(Modifier.height(22.dp))
     }
+}
+
+/** Wraps pills onto multiple lines instead of scrolling horizontally off-screen — meant for the
+ *  narrow fixed-width left column of the landscape/TV details layout. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+internal fun FlowRowPills(content: @Composable () -> Unit) {
+    androidx.compose.foundation.layout.FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) { content() }
 }
 
 @Composable
@@ -2348,6 +2436,37 @@ private fun readableMovieDuration(value: String?): String? {
         return if (minutes >= 60L) "${minutes / 60}h ${minutes % 60}m" else "${minutes}m"
     }
     return text
+}
+
+private fun watchedFraction(movie: PlaylistItem, progress: Map<String, Long>): Float? {
+    val positionMs = progress[channelKey(movie)]?.takeIf { it > 0L } ?: return null
+    val durationMs = parseDurationToMillis(movie.duration)?.takeIf { it > 0L } ?: return null
+    return (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
+}
+
+private val youtubeVideoIdPattern = Regex("(?:v=|youtu\\.be/|/embed/)([\\w-]{11})")
+
+/** Opens a trailer as directly as possible: when [trailerUrl] resolves to a YouTube video id
+ *  (provided by the server alongside movie/series metadata), this jumps straight into that
+ *  video's fullscreen player — in the YouTube app if installed, its web player otherwise — with
+ *  no search results list to pick from first. Falls back to a plain YouTube search only when no
+ *  direct video id is available (e.g. M3U playlists with no provider-supplied trailer). */
+internal fun openTrailer(context: android.content.Context, trailerUrl: String?, fallbackQuery: String) {
+    val videoId = trailerUrl?.let(youtubeVideoIdPattern::find)?.groupValues?.get(1)
+    if (videoId != null) {
+        val opened = runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("vnd.youtube:$videoId")))
+            true
+        }.getOrDefault(false)
+        if (opened) return
+        runCatching {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.youtube.com/watch?v=$videoId")))
+        }
+        return
+    }
+    val searchUri = Uri.parse("https://www.youtube.com/results").buildUpon()
+        .appendQueryParameter("search_query", fallbackQuery).build()
+    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, searchUri)) }
 }
 
 

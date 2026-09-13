@@ -77,7 +77,7 @@ internal fun SeriesScreen(
     val categories = remember(seriesItems) { seriesItems.map { it.group }.distinct() }
     val store = remember { context.getSharedPreferences("series_library", Context.MODE_PRIVATE) }
     var view by remember { mutableStateOf(SeriesView.BROWSE) }
-    var selectedCategory by remember { mutableStateOf(categories.firstOrNull().orEmpty()) }
+    var selectedCategory by remember { mutableStateOf("Continue watching") }
     var selectedSeries by remember { mutableStateOf<PlaylistItem?>(null) }
     var selectedEpisode by remember { mutableStateOf<SeriesEpisode?>(null) }
     var details by remember { mutableStateOf<SeriesDetailsInfo?>(null) }
@@ -252,7 +252,32 @@ internal fun SeriesScreen(
         onResumeHandled()
     }
 
-    // No background fill: the themed backdrop is painted app-wide behind the Scaffold in MainActivity.
+    // No flat background fill here otherwise: the themed backdrop is painted app-wide behind the
+    // Scaffold in MainActivity. The series' own backdrop/poster below is a per-title image, not a
+    // decorative one, so it's drawn on top of that shared background instead of replacing it.
+    Box(Modifier.fillMaxSize()) {
+        if (view == SeriesView.DETAILS) {
+            val pageBackdrop = details?.backdropUrl ?: details?.posterUrl ?: selectedSeries?.logoUrl
+            if (!pageBackdrop.isNullOrBlank()) {
+                AsyncImage(
+                    model = pageBackdrop,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize()
+                )
+                Box(
+                    Modifier.fillMaxSize().background(
+                        Brush.verticalGradient(
+                            listOf(
+                                Color.Black.copy(alpha = .56f),
+                                MaterialTheme.colorScheme.background.copy(alpha = .78f),
+                                MaterialTheme.colorScheme.background.copy(alpha = .96f)
+                            )
+                        )
+                    )
+                )
+            }
+        }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val landscape = maxWidth > maxHeight
         // Rendered here, above the landscape/portrait split, as a single orientation- and
@@ -443,6 +468,7 @@ internal fun SeriesScreen(
             }
         }
     }
+    }
 }
 
 @Composable
@@ -494,9 +520,9 @@ private fun LandscapeSeriesBrowser(
                 LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                     items(allCategories) { category ->
                         Surface(
-                            onClick = { onCategory(category) },
                             modifier = Modifier.fillMaxWidth()
-                                .then(if (category == "Continue watching") Modifier.focusRequester(continueWatchingFocusRequester) else Modifier),
+                                .then(if (category == "Continue watching") Modifier.focusRequester(continueWatchingFocusRequester) else Modifier)
+                                .focusableClickable(cornerRadius = 11.dp) { onCategory(category) },
                             shape = RoundedCornerShape(11.dp),
                             color = if (category == selectedCategory) Cyan.copy(alpha = .24f) else Color.Transparent
                         ) {
@@ -725,13 +751,101 @@ private fun SeriesDetails(
     val displayTitle = details?.originalTitle ?: series.name
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val trailerSearchTerm = stringResource(R.string.trailer_search_term)
+    val trailerQuery = listOfNotNull(details?.originalTitle ?: series.name, details?.year, trailerSearchTerm).joinToString(" ")
+
+    @Composable
+    fun SeasonsAndEpisodes() {
+        if (seasons.isNotEmpty()) {
+            Text(stringResource(R.string.seasons_label), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                seasons.forEach { season ->
+                    FilterChip(
+                        selected = selectedSeason == season,
+                        onClick = { onSeason(season) },
+                        label = { Text(stringResource(R.string.season_number, season)) }
+                    )
+                }
+            }
+            Text(stringResource(R.string.episodes_label), fontSize = 20.sp, fontWeight = FontWeight.Bold)
+            episodes.forEach { episode ->
+                EpisodeRow(
+                    episode = episode,
+                    progress = progress[episode.id] ?: 0L,
+                    onClick = { onEpisode(episode) }
+                )
+            }
+        } else if (error != null) {
+            Text(stringResource(R.string.episodes_unavailable), color = MaterialTheme.colorScheme.error)
+        } else {
+            Text(stringResource(R.string.no_episodes_supplied), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+
+    if (landscape) {
+        // TV has the full screen width to work with, so poster/actions/pills sit in a fixed-width
+        // left column instead of stacked above a single scrolling column that used to run the
+        // full width of the screen for a title, some pills, and two buttons.
+        Row(modifier.fillMaxSize(), horizontalArrangement = Arrangement.spacedBy(20.dp)) {
+            Column(Modifier.width(200.dp).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    Modifier.fillMaxWidth().aspectRatio(2f / 3f),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    shadowElevation = 12.dp,
+                    border = BorderStroke(2.dp, Color.White.copy(alpha = .18f))
+                ) {
+                    if (!poster.isNullOrBlank()) AsyncImage(poster, series.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = { openTrailer(context, details?.trailerUrl, trailerQuery) }, modifier = Modifier.weight(1f).height(44.dp)) {
+                        Icon(Icons.Default.SmartDisplay, null)
+                    }
+                    AnimatedFilledTonalIconButton(onClick = onFavorite, modifier = Modifier.size(44.dp)) {
+                        Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, if (favorite) stringResource(R.string.cd_favorite_remove) else stringResource(R.string.cd_favorite_add), tint = if (favorite) Orange else Cyan)
+                    }
+                }
+                FlowRowPills {
+                    details?.rating?.takeIf { it != "0" && it != "0.0" }?.let { SeriesPill("★ $it/10", Orange) }
+                    details?.year?.takeIf(String::isNotBlank)?.let { SeriesPill(it, Cyan) }
+                    details?.genre?.takeIf(String::isNotBlank)?.let { SeriesPill(it, BrandBlue) }
+                    SeriesPill(series.group, Cyan)
+                }
+            }
+            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(displayTitle, fontSize = 24.sp, fontWeight = FontWeight.Black, lineHeight = 28.sp)
+                if (!details?.originalTitle.isNullOrBlank() && details?.originalTitle != series.name) {
+                    Text(series.name, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                }
+                if (loading) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Text(stringResource(R.string.loading_seasons_episodes), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    Text(
+                        details?.description?.takeIf(String::isNotBlank) ?: stringResource(R.string.no_series_details),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 15.sp,
+                        lineHeight = 22.sp
+                    )
+                    details?.cast?.takeIf(String::isNotBlank)?.let { SeriesCredit(Icons.Default.Groups, stringResource(R.string.cast_label), it) }
+                    details?.director?.takeIf(String::isNotBlank)?.let { SeriesCredit(Icons.Default.MovieCreation, stringResource(R.string.director_label), it) }
+                    SeasonsAndEpisodes()
+                }
+                Spacer(Modifier.height(24.dp))
+            }
+        }
+        return
+    }
+
     Column(
         modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(if (landscape) 8.dp else 14.dp)
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         Surface(
-            Modifier.fillMaxWidth().then(if (landscape) Modifier.height(170.dp) else Modifier.aspectRatio(16f / 9f)),
-            shape = RoundedCornerShape(if (landscape) 14.dp else 20.dp),
+            Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+            shape = RoundedCornerShape(20.dp),
             color = Color.Black,
             shadowElevation = 10.dp
         ) {
@@ -741,7 +855,7 @@ private fun SeriesDetails(
                 }
                 Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = .9f)))))
                 Surface(
-                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(if (landscape) 80.dp else 104.dp).aspectRatio(2f / 3f),
+                    Modifier.align(Alignment.BottomStart).offset(x = 14.dp).width(104.dp).aspectRatio(2f / 3f),
                     shape = RoundedCornerShape(13.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shadowElevation = 12.dp,
@@ -757,7 +871,7 @@ private fun SeriesDetails(
                     fontSize = 21.sp,
                     fontWeight = FontWeight.Black,
                     maxLines = 3,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(start = if (landscape) 108.dp else 132.dp, end = 14.dp, bottom = if (landscape) 10.dp else 16.dp)
+                    modifier = Modifier.align(Alignment.BottomStart).padding(start = 132.dp, end = 14.dp, bottom = 16.dp)
                 )
             }
         }
@@ -778,13 +892,7 @@ private fun SeriesDetails(
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(
-                onClick = {
-                    val query = listOfNotNull(details?.originalTitle ?: series.name, details?.year, trailerSearchTerm)
-                        .joinToString(" ")
-                    val uri = Uri.parse("https://www.youtube.com/results").buildUpon()
-                        .appendQueryParameter("search_query", query).build()
-                    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, uri)) }
-                },
+                onClick = { openTrailer(context, details?.trailerUrl, trailerQuery) },
                 modifier = Modifier.weight(1f).height(52.dp)
             ) {
                 Icon(Icons.Default.SmartDisplay, null)
@@ -809,34 +917,7 @@ private fun SeriesDetails(
             )
             details?.cast?.takeIf(String::isNotBlank)?.let { SeriesCredit(Icons.Default.Groups, stringResource(R.string.cast_label), it) }
             details?.director?.takeIf(String::isNotBlank)?.let { SeriesCredit(Icons.Default.MovieCreation, stringResource(R.string.director_label), it) }
-
-            if (seasons.isNotEmpty()) {
-                Text(stringResource(R.string.seasons_label), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                Row(
-                    Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    seasons.forEach { season ->
-                        FilterChip(
-                            selected = selectedSeason == season,
-                            onClick = { onSeason(season) },
-                            label = { Text(stringResource(R.string.season_number, season)) }
-                        )
-                    }
-                }
-                Text(stringResource(R.string.episodes_label), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                episodes.forEach { episode ->
-                    EpisodeRow(
-                        episode = episode,
-                        progress = progress[episode.id] ?: 0L,
-                        onClick = { onEpisode(episode) }
-                    )
-                }
-            } else if (error != null) {
-                Text(stringResource(R.string.episodes_unavailable), color = MaterialTheme.colorScheme.error)
-            } else {
-                Text(stringResource(R.string.no_episodes_supplied), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            SeasonsAndEpisodes()
         }
         Spacer(Modifier.height(24.dp))
     }
@@ -844,6 +925,10 @@ private fun SeriesDetails(
 
 @Composable
 private fun EpisodeRow(episode: SeriesEpisode, progress: Long, onClick: () -> Unit) {
+    val durationMs = remember(episode.duration) { parseDurationToMillis(episode.duration) }
+    val watchedFraction = if (progress > 0L && durationMs != null && durationMs > 0L) {
+        (progress.toFloat() / durationMs).coerceIn(0f, 1f)
+    } else null
     ElevatedCard(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -860,6 +945,13 @@ private fun EpisodeRow(episode: SeriesEpisode, progress: Long, onClick: () -> Un
                     Icon(Icons.Default.PlayCircle, null, tint = Cyan, modifier = Modifier.size(30.dp))
                     if (!episode.thumbnailUrl.isNullOrBlank()) {
                         AsyncImage(episode.thumbnailUrl, episode.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                    }
+                    // YouTube-style watched indicator: a red strip along the bottom edge of the
+                    // thumbnail sized to how far into the episode the user got.
+                    if (watchedFraction != null) {
+                        Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = .35f))) {
+                            Box(Modifier.fillMaxHeight().fillMaxWidth(watchedFraction).background(Color(0xFFE50914)))
+                        }
                     }
                 }
             }
@@ -910,4 +1002,18 @@ private fun SeriesCredit(icon: androidx.compose.ui.graphics.vector.ImageVector, 
 private fun seriesProgressTime(milliseconds: Long): String {
     val totalMinutes = milliseconds.coerceAtLeast(0L) / 60_000L
     return if (totalMinutes >= 60L) "${totalMinutes / 60L}h ${totalMinutes % 60L}m" else "${totalMinutes}m"
+}
+
+/** Providers report episode duration as either "HH:MM:SS"/"MM:SS" or a plain seconds count —
+ *  parses either into milliseconds, or null if it's neither (so the watched-progress strip can be
+ *  skipped rather than drawn against a nonsense total). */
+internal fun parseDurationToMillis(duration: String?): Long? {
+    val text = duration?.trim()?.takeIf(String::isNotBlank) ?: return null
+    if (':' in text) {
+        val parts = text.split(':').map { it.toIntOrNull() ?: return null }
+        var seconds = 0L
+        for (part in parts) seconds = seconds * 60 + part
+        return seconds * 1000L
+    }
+    return text.toLongOrNull()?.times(1000L)
 }
