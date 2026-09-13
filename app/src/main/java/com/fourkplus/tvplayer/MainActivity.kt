@@ -23,11 +23,14 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.ui.unit.Dp
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -1143,6 +1146,12 @@ private fun HomeScreen(
     var visible by remember { mutableStateOf(false) }
     LaunchedEffect(Unit) { visible = true }
     val context = LocalContext.current
+    // A remote user needs an obvious starting point the instant Home appears — there's no cursor
+    // or touch to fall back on. Skipped entirely on phones/tablets, touch or landscape, where an
+    // unexplained focus ring on launch would just look like a bug.
+    val isTv = remember { context.isTvDevice() }
+    val liveTileFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(isTv) { if (isTv) runCatching { liveTileFocusRequester.requestFocus() } }
     val continueEntry = remember(playlist) { com.fourkplus.tvplayer.data.ContinueWatchingStore.read(context) }
     val continueItem = remember(playlist, continueEntry) {
         continueEntry?.let { entry -> playlist?.items?.firstOrNull { channelKey(it) == entry.itemKey } }
@@ -1239,7 +1248,7 @@ private fun HomeScreen(
                     // are on Settings > App & playlist information.
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            HomeTile(stringResource(R.string.nav_live_tv), playlist?.let { stringResource(R.string.home_live_tv_count, it.liveCount) } ?: stringResource(R.string.home_live_tv_default), Icons.Default.LiveTv, TileKind.LIVE, isDark, Modifier.weight(1f), 106.dp, onOpenLive)
+                            HomeTile(stringResource(R.string.nav_live_tv), playlist?.let { stringResource(R.string.home_live_tv_count, it.liveCount) } ?: stringResource(R.string.home_live_tv_default), Icons.Default.LiveTv, TileKind.LIVE, isDark, Modifier.weight(1f).focusRequester(liveTileFocusRequester), 106.dp, onOpenLive)
                             HomeTile(stringResource(R.string.nav_movies), playlist?.let { stringResource(R.string.home_movies_count, it.movieCount) } ?: stringResource(R.string.home_movies_default), Icons.Default.Movie, TileKind.MOVIES, isDark, Modifier.weight(1f), 106.dp, onOpenMovies)
                             HomeTile(stringResource(R.string.nav_series), playlist?.let { stringResource(R.string.home_series_count, it.seriesCount) } ?: stringResource(R.string.home_series_default), Icons.Default.VideoLibrary, TileKind.SERIES, isDark, Modifier.weight(1f), 106.dp, onOpenSeries)
                         }
@@ -1964,8 +1973,7 @@ private fun LandscapeLiveBrowser(
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         items(searchedCategories) { category ->
                             Surface(
-                                onClick = { onCategory(category) },
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.fillMaxWidth().focusableClickable(cornerRadius = 9.dp) { onCategory(category) },
                                 shape = RoundedCornerShape(9.dp),
                                 color = if (category == selectedCategory) Orange.copy(alpha = .88f) else Color.Transparent
                             ) {
@@ -2003,16 +2011,14 @@ private fun LandscapeLiveBrowser(
                     LazyColumn(contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                     items(searchedChannels) { channel ->
                         val selected = channelKey(channel) == selectedChannel?.let(::channelKey)
+                        // A remote has no "double-tap": long-press (holding Select) reaches the
+                        // same fullscreen-expand action a touch double-tap does.
                         Surface(
-                            modifier = Modifier.fillMaxWidth().pointerInput(channelKey(channel)) {
-                                detectTapGestures(
-                                    onTap = { onChannel(channel) },
-                                    onDoubleTap = {
-                                        onChannelFullscreen(channel)
-                                        onExpandFullscreen()
-                                    }
-                                )
-                            },
+                            modifier = Modifier.fillMaxWidth().focusableClickable(
+                                cornerRadius = 9.dp,
+                                onLongClick = { onChannelFullscreen(channel); onExpandFullscreen() },
+                                onDoubleClick = { onChannelFullscreen(channel); onExpandFullscreen() }
+                            ) { onChannel(channel) },
                             shape = RoundedCornerShape(9.dp),
                             color = if (selected) Cyan.copy(alpha = .32f) else Color.Transparent
                         ) {
@@ -2128,7 +2134,7 @@ private fun MoviePoster(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick)) {
+    Column(modifier.clip(RoundedCornerShape(14.dp)).focusableClickable(cornerRadius = 14.dp, onClick = onClick)) {
         Surface(
             Modifier.fillMaxWidth().aspectRatio(2f / 3f), RoundedCornerShape(14.dp),
             color = MaterialTheme.colorScheme.surfaceVariant,
@@ -2872,6 +2878,16 @@ private fun CompactChannelRow(
 
 internal fun channelKey(channel: PlaylistItem): String = channel.channelId ?: "${channel.group}:${channel.name}"
 
+/** True on an actual Android TV / Fire TV / set-top box, false on phones and tablets — including
+ *  a phone in landscape, which reuses the exact same UI but must never auto-focus anything (a
+ *  cyan ring appearing on launch with no D-pad to explain it would just look like a UI bug). Used
+ *  to gate the one-time initial focus request on Home, since a remote user needs an obvious
+ *  starting point but a touch user does not. */
+internal fun Context.isTvDevice(): Boolean {
+    val uiModeManager = getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager
+    return uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+}
+
 /** Looks up (and caches) the now/next programme for [channel], gated behind [EpgStore]'s shared
  *  semaphore so scrolling a long channel list can't fire dozens of EPG requests at once. Returns
  *  null silently for M3U playlists, channels without an id, or providers with no EPG data —
@@ -3241,14 +3257,70 @@ private fun HomeTile(
     }
 }
 
+/** Like [Modifier.clickable]/[Modifier.combinedClickable], but also paints a steady focus ring
+ *  while a D-pad/keyboard moves focus onto it. Regular touch users never see it (nothing gains
+ *  focus from a tap), but it's the only way a remote-control user can tell which poster, row, or
+ *  list item will be selected next — Android TV has no cursor or hover state to fall back on. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+internal fun Modifier.focusableClickable(
+    cornerRadius: Dp = 12.dp,
+    onLongClick: (() -> Unit)? = null,
+    onDoubleClick: (() -> Unit)? = null,
+    onClick: () -> Unit
+): Modifier {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val focusAlpha by animateFloatAsState(if (focused) 1f else 0f, tween(150), label = "focusRing")
+    return this
+        .drawWithContent {
+            drawContent()
+            if (focusAlpha > 0f) {
+                val strokeWidth = 2.5.dp.toPx()
+                drawRoundRect(
+                    color = Cyan.copy(alpha = focusAlpha),
+                    topLeft = Offset(strokeWidth / 2f, strokeWidth / 2f),
+                    size = Size(size.width - strokeWidth, size.height - strokeWidth),
+                    cornerRadius = CornerRadius(cornerRadius.toPx()),
+                    style = Stroke(width = strokeWidth)
+                )
+            }
+        }
+        .combinedClickable(
+            interactionSource = interaction,
+            indication = LocalIndication.current,
+            onLongClick = onLongClick,
+            onDoubleClick = onDoubleClick,
+            onClick = onClick
+        )
+}
+
 @Composable
 private fun pressFeedback(onClick: () -> Unit): Modifier {
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
+    val focused by interaction.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (pressed) .975f else 1f, tween(90), label = "press")
+    // Every card this is applied to clips to its own, differently-rounded shape, but a D-pad user
+    // still needs SOME visible sign of which card gets selected next — a close-enough rounded
+    // outline overlaid on top reads clearly as "this one" even when it doesn't hug the exact corner.
+    val focusAlpha by animateFloatAsState(if (focused) 1f else 0f, tween(150), label = "cardFocus")
     val haptic = LocalHapticFeedback.current
     return Modifier
         .graphicsLayer(scaleX = scale, scaleY = scale)
+        .drawWithContent {
+            drawContent()
+            if (focusAlpha > 0f) {
+                val strokeWidth = 2.5.dp.toPx()
+                drawRoundRect(
+                    color = Cyan.copy(alpha = focusAlpha),
+                    topLeft = Offset(strokeWidth / 2f, strokeWidth / 2f),
+                    size = Size(size.width - strokeWidth, size.height - strokeWidth),
+                    cornerRadius = CornerRadius(16.dp.toPx()),
+                    style = Stroke(width = strokeWidth)
+                )
+            }
+        }
         .clickable(interactionSource = interaction, indication = LocalIndication.current) {
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             onClick()
@@ -3273,6 +3345,17 @@ private fun DrawScope.drawIconBurst(progress: Float) {
     val radius = size.minDimension * .95f * progress
     drawCircle(color = Cyan.copy(alpha = fade * .30f), radius = radius, center = center)
     drawCircle(color = Cyan.copy(alpha = fade * .85f), radius = radius, center = center, style = Stroke(width = 1.6.dp.toPx()))
+}
+
+/** Steady cyan ring shown for as long as a D-pad/keyboard moves focus onto this icon — there is
+ *  no cursor or hover state on Android TV, so this is the only way a remote user can see which of
+ *  several icons will fire on the next "select" press. Invisible (alpha driven to 0) on touch
+ *  devices, where nothing ever gains keyboard/D-pad focus in the first place. */
+private fun DrawScope.drawFocusRing(alpha: Float) {
+    if (alpha <= 0f) return
+    val radius = size.minDimension * .66f
+    drawCircle(color = Cyan.copy(alpha = alpha * .16f), radius = radius, center = center)
+    drawCircle(color = Cyan.copy(alpha = alpha * .95f), radius = radius, center = center, style = Stroke(width = 2.2.dp.toPx()))
 }
 
 /** Drives the expanding-ring tap animation: an [Animatable] restarted from 0 on every [fire]
@@ -3305,12 +3388,14 @@ internal fun AnimatedIconButton(
 ) {
     val actualInteractionSource = interactionSource ?: remember { MutableInteractionSource() }
     val pressed by actualInteractionSource.collectIsPressedAsState()
+    val focused by actualInteractionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (pressed) ICON_PRESS_SCALE else 1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium), label = "iconPress")
+    val focusAlpha by animateFloatAsState(if (focused) 1f else 0f, tween(150), label = "iconFocus")
     val (burst, fireBurst) = rememberIconBurst()
     IconButton(
         onClick = { fireBurst(); onClick() },
         modifier = modifier
-            .drawBehind { drawIconBurst(burst.value) }
+            .drawBehind { drawFocusRing(focusAlpha); drawIconBurst(burst.value) }
             .graphicsLayer(scaleX = scale, scaleY = scale),
         enabled = enabled,
         colors = colors,
@@ -3332,12 +3417,14 @@ internal fun AnimatedFilledIconButton(
 ) {
     val actualInteractionSource = interactionSource ?: remember { MutableInteractionSource() }
     val pressed by actualInteractionSource.collectIsPressedAsState()
+    val focused by actualInteractionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (pressed) ICON_PRESS_SCALE else 1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium), label = "iconPress")
+    val focusAlpha by animateFloatAsState(if (focused) 1f else 0f, tween(150), label = "iconFocus")
     val (burst, fireBurst) = rememberIconBurst()
     FilledIconButton(
         onClick = { fireBurst(); onClick() },
         modifier = modifier
-            .drawBehind { drawIconBurst(burst.value) }
+            .drawBehind { drawFocusRing(focusAlpha); drawIconBurst(burst.value) }
             .graphicsLayer(scaleX = scale, scaleY = scale),
         enabled = enabled,
         shape = shape,
@@ -3360,12 +3447,14 @@ internal fun AnimatedFilledTonalIconButton(
 ) {
     val actualInteractionSource = interactionSource ?: remember { MutableInteractionSource() }
     val pressed by actualInteractionSource.collectIsPressedAsState()
+    val focused by actualInteractionSource.collectIsFocusedAsState()
     val scale by animateFloatAsState(if (pressed) ICON_PRESS_SCALE else 1f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium), label = "iconPress")
+    val focusAlpha by animateFloatAsState(if (focused) 1f else 0f, tween(150), label = "iconFocus")
     val (burst, fireBurst) = rememberIconBurst()
     FilledTonalIconButton(
         onClick = { fireBurst(); onClick() },
         modifier = modifier
-            .drawBehind { drawIconBurst(burst.value) }
+            .drawBehind { drawFocusRing(focusAlpha); drawIconBurst(burst.value) }
             .graphicsLayer(scaleX = scale, scaleY = scale),
         enabled = enabled,
         shape = shape,

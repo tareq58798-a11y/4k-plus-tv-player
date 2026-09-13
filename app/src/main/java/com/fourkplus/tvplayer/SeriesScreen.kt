@@ -618,7 +618,7 @@ private fun SeriesPoster(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    Column(modifier.clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick)) {
+    Column(modifier.clip(RoundedCornerShape(14.dp)).focusableClickable(cornerRadius = 14.dp, onClick = onClick)) {
         Surface(
             Modifier.fillMaxWidth().aspectRatio(2f / 3f),
             RoundedCornerShape(14.dp),
