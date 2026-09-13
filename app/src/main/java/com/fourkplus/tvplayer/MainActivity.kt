@@ -417,14 +417,6 @@ private fun App() {
                             MediaKind.SERIES -> Screen.SERIES
                         }
                     },
-                    onOpenItem = { item ->
-                        resumeRequest = ResumeRequest(channelKey(item), autoPlay = false)
-                        screen = when (item.kind) {
-                            MediaKind.LIVE -> Screen.LIVE_TV
-                            MediaKind.MOVIE -> Screen.MOVIES
-                            MediaKind.SERIES -> Screen.SERIES
-                        }
-                    },
                     onMessage = message
                 )
                 Screen.SEARCH -> GlobalSearchScreen(
@@ -1151,7 +1143,6 @@ private fun HomeScreen(
     onOpenSeries: () -> Unit,
     onSearch: () -> Unit,
     onContinueWatching: (PlaylistItem, String?) -> Unit,
-    onOpenItem: (PlaylistItem) -> Unit,
     onMessage: (String) -> Unit
 ) {
     var visible by remember { mutableStateOf(false) }
@@ -1183,8 +1174,6 @@ private fun HomeScreen(
         recentLiveIds.mapNotNull { id -> liveChannels.firstOrNull { channelKey(it) == id } }
     }
     val featured = remember(recentlyWatchedLive) { recentlyWatchedLive.take(12) }
-    val recentMovies = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.MOVIE }?.take(12).orEmpty() }
-    val recentSeries = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.SERIES }?.take(12).orEmpty() }
     // Duplicate logo URLs (common with low-quality playlists) collapse to a generated placeholder
     // per card below, so recently watched channels never look like copies of each other.
     val featuredPreviews = remember(featured) {
@@ -1278,22 +1267,7 @@ private fun HomeScreen(
                                 }
                             }
                         }
-                        if (recentMovies.isNotEmpty()) {
-                            HomeCompactShelfHeader(stringResource(R.string.nav_movies), isDark, onOpenMovies)
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                items(recentMovies, key = { "recent_movie_" + channelKey(it) }) { movie ->
-                                    HomeMediaCard(movie.name, movie.logoUrl, Icons.Default.Movie, Orange, width = 56.dp) { onOpenItem(movie) }
-                                }
-                            }
-                        }
-                        if (recentSeries.isNotEmpty()) {
-                            HomeCompactShelfHeader(stringResource(R.string.nav_series), isDark, onOpenSeries)
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                items(recentSeries, key = { "recent_series_" + channelKey(it) }) { series ->
-                                    HomeMediaCard(series.name, series.logoUrl, Icons.Default.VideoLibrary, BrandBlue, width = 56.dp) { onOpenItem(series) }
-                                }
-                            }
-                        }
+                        HomeCompactDeviceInfo(playlist)
                     }
                 }
             }
@@ -1500,23 +1474,49 @@ private fun HomeCompactShelfHeader(title: String, isDark: Boolean, onSeeAll: () 
     }
 }
 
-/** Small poster-plus-title card for Home's "recently added" movies/series shelves — a lighter
- *  version of MovieGrid's/SeriesGrid's own poster cards (no favorite star, smaller) sized for
- *  Home's tight landscape row rather than a full browse grid. */
+/** Compact device-info block for Home's landscape right column, filling the space the
+ *  Recently Added Movies/Series shelves used to occupy — the same App MAC / device key /
+ *  playlist expiry values as [HomeDeviceInfoBar] (portrait), laid out as tight label/value
+ *  rows instead of a wide bar so it fits under the Live TV strip on the fixed-height screen. */
 @Composable
-private fun HomeMediaCard(name: String, imageUrl: String?, icon: ImageVector, accent: Color, width: Dp, onClick: () -> Unit) {
-    Column(Modifier.width(width).then(pressFeedback(onClick)), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Surface(
-            Modifier.fillMaxWidth().aspectRatio(2f / 3f),
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant
-        ) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Icon(icon, null, tint = accent.copy(alpha = .55f), modifier = Modifier.size(20.dp))
-                if (!imageUrl.isNullOrBlank()) AsyncImage(imageUrl, name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
-            }
+private fun HomeCompactDeviceInfo(playlist: LoadedPlaylist?) {
+    val context = LocalContext.current
+    val appMac = remember { com.fourkplus.tvplayer.data.DeviceIdentity.mac(context) }
+    val deviceKey = remember { com.fourkplus.tvplayer.data.DeviceIdentity.deviceKey(context) }
+    val expiryText = remember(playlist?.expiryEpochSeconds) {
+        playlist?.expiryEpochSeconds?.let { epochSeconds ->
+            runCatching {
+                val date = java.time.Instant.ofEpochSecond(epochSeconds)
+                    .atZone(java.time.ZoneId.systemDefault())
+                    .toLocalDate()
+                val days = java.time.temporal.ChronoUnit.DAYS.between(java.time.LocalDate.now(), date)
+                when {
+                    days > 0 -> "$date ($days days)"
+                    days == 0L -> "$date (today)"
+                    else -> "$date (expired)"
+                }
+            }.getOrNull()
+        } ?: "Not provided"
+    }
+    Surface(
+        Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = .72f),
+        border = BorderStroke(1.dp, Cyan.copy(alpha = .32f))
+    ) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+            HomeCompactInfoRow("App MAC", appMac)
+            HomeCompactInfoRow("Device key", deviceKey)
+            HomeCompactInfoRow("Playlist expires", expiryText)
         }
-        Text(name, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+    }
+}
+
+@Composable
+private fun HomeCompactInfoRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, Modifier.weight(1f), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+        Text(value, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 

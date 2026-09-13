@@ -27,6 +27,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -104,6 +105,9 @@ internal fun SeriesScreen(
             }.toMap()
         )
     }
+    var watchedEpisodeIds by remember {
+        mutableStateOf(store.getStringSet("watched_episodes", emptySet()).orEmpty().toSet())
+    }
 
     val byId = remember(seriesItems) { seriesItems.associateBy(::channelKey) }
     val favorites = remember(seriesItems, favoriteIds) { seriesItems.filter { channelKey(it) in favoriteIds } }
@@ -173,18 +177,23 @@ internal fun SeriesScreen(
     }
 
     fun saveEpisodeProgress(series: PlaylistItem, episode: SeriesEpisode, position: Long, duration: Long) {
-        val normalized = if (duration > 0L && position >= duration - 20_000L) 0L else position.coerceAtLeast(0L)
+        val finished = duration > 0L && position >= duration - 20_000L
+        val normalized = if (finished) 0L else position.coerceAtLeast(0L)
         progress = if (normalized == 0L) progress - episode.id else progress + (episode.id to normalized)
         val updatedContinue = if (normalized > 0L) continueSeriesIds + channelKey(series) else {
             val otherEpisodeInProgress = details?.episodes.orEmpty().any { it.id != episode.id && (progress[it.id] ?: 0L) > 0L }
             if (otherEpisodeInProgress) continueSeriesIds else continueSeriesIds - channelKey(series)
         }
         continueSeriesIds = updatedContinue
-        store.edit()
+        val editor = store.edit()
             .putLong("episode_progress_${episode.id}", normalized)
             .putStringSet("continue_series", updatedContinue)
             .putString("last_episode_${channelKey(series)}", episode.id)
-            .apply()
+        if (finished && episode.id !in watchedEpisodeIds) {
+            watchedEpisodeIds = watchedEpisodeIds + episode.id
+            editor.putStringSet("watched_episodes", watchedEpisodeIds)
+        }
+        editor.apply()
         if (normalized > 0L) {
             com.fourkplus.tvplayer.data.ContinueWatchingStore.record(context, MediaKind.SERIES, channelKey(series), episode.id)
         } else {
@@ -453,6 +462,7 @@ internal fun SeriesScreen(
                         },
                         favorite = channelKey(series) in favoriteIds,
                         progress = progress,
+                        watchedEpisodeIds = watchedEpisodeIds,
                         onFavorite = { toggleFavorite(series) },
                         onEpisode = { episode ->
                             selectedEpisode = episode
@@ -752,6 +762,7 @@ private fun SeriesDetails(
     onSeason: (Int) -> Unit,
     favorite: Boolean,
     progress: Map<String, Long>,
+    watchedEpisodeIds: Set<String>,
     onFavorite: () -> Unit,
     onEpisode: (SeriesEpisode) -> Unit,
     modifier: Modifier
@@ -787,6 +798,7 @@ private fun SeriesDetails(
                 EpisodeRow(
                     episode = episode,
                     progress = progress[episode.id] ?: 0L,
+                    watched = episode.id in watchedEpisodeIds,
                     onClick = { onEpisode(episode) }
                 )
             }
@@ -937,7 +949,7 @@ private fun SeriesDetails(
 }
 
 @Composable
-private fun EpisodeRow(episode: SeriesEpisode, progress: Long, onClick: () -> Unit) {
+private fun EpisodeRow(episode: SeriesEpisode, progress: Long, watched: Boolean, onClick: () -> Unit) {
     val durationMs = remember(episode.duration) { parseDurationToMillis(episode.duration) }
     val watchedFraction = if (progress > 0L && durationMs != null && durationMs > 0L) {
         (progress.toFloat() / durationMs).coerceIn(0f, 1f)
@@ -957,13 +969,29 @@ private fun EpisodeRow(episode: SeriesEpisode, progress: Long, onClick: () -> Un
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Icon(Icons.Default.PlayCircle, null, tint = Cyan, modifier = Modifier.size(30.dp))
                     if (!episode.thumbnailUrl.isNullOrBlank()) {
-                        AsyncImage(episode.thumbnailUrl, episode.title, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+                        AsyncImage(
+                            episode.thumbnailUrl,
+                            episode.title,
+                            Modifier.fillMaxSize().alpha(if (watched) .55f else 1f),
+                            contentScale = ContentScale.Crop
+                        )
                     }
                     // YouTube-style watched indicator: a red strip along the bottom edge of the
                     // thumbnail sized to how far into the episode the user got.
                     if (watchedFraction != null) {
                         Box(Modifier.align(Alignment.BottomStart).fillMaxWidth().height(3.dp).background(Color.White.copy(alpha = .35f))) {
                             Box(Modifier.fillMaxHeight().fillMaxWidth(watchedFraction).background(Color(0xFFE50914)))
+                        }
+                    }
+                    if (watched) {
+                        Surface(
+                            modifier = Modifier.align(Alignment.TopEnd).padding(5.dp).size(20.dp),
+                            shape = androidx.compose.foundation.shape.CircleShape,
+                            color = Color(0xFF2ECC71)
+                        ) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Default.Check, null, tint = Color.White, modifier = Modifier.size(13.dp))
+                            }
                         }
                     }
                 }
@@ -976,9 +1004,11 @@ private fun EpisodeRow(episode: SeriesEpisode, progress: Long, onClick: () -> Un
                     maxLines = 3
                 )
                 val resumeLabel = stringResource(R.string.resume_time, seriesProgressTime(progress))
+                val watchedLabel = stringResource(R.string.watched_label)
                 val detail = buildList {
                     episode.duration?.takeIf(String::isNotBlank)?.let(::add)
                     if (progress > 0L) add(resumeLabel)
+                    if (watched) add(watchedLabel)
                 }.joinToString(" • ")
                 if (detail.isNotBlank()) {
                     Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)

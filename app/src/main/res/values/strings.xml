@@ -124,6 +124,7 @@
     <string name="movies_star_empty">Movies you star will appear here.</string>
     <string name="movies_watch_empty">Movies you play will appear here.</string>
     <string name="resume_time">Resume %1$s</string>
+    <string name="watched_label">Watched</string>
     <string name="play_action">Play</string>
     <string name="watch_trailer">Watch trailer</string>
     <string name="loading_movie_info">Loading movie information…</string>
