@@ -1250,17 +1250,18 @@ private fun HomeScreen(
                             else onMessage(nothingToContinueYet)
                         }
                     }
-                    // No verticalScroll here: the tile row's weight(1f) below absorbs whatever
-                    // vertical space the shelf/device-info don't need, so the device-info box
-                    // always lands flush with this column's bottom edge - lining up with
-                    // Continue Watching's bottom edge on the left, instead of floating wherever
-                    // the (variable-height) content above it happens to end.
+                    // Tiles and the shelf are fixed-size now (bigger than before, per the approved
+                    // sketch) rather than stretch-to-fill, since a weighted tile row scaled down
+                    // to almost nothing on real TV panels once the shelf/device-info claimed their
+                    // fixed share of a shorter landscape height than the emulator's. verticalScroll
+                    // is a safety net for devices where the fixed sizes below don't quite fit
+                    // instead of clipping the device-info box off the bottom.
                     Column(
-                        Modifier.weight(1f).fillMaxHeight(),
+                        Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Row(
-                            Modifier.fillMaxWidth().weight(1f),
+                            Modifier.fillMaxWidth().height(118.dp),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             HomeTile(stringResource(R.string.nav_live_tv), playlist?.let { stringResource(R.string.home_live_tv_count, it.liveCount) } ?: stringResource(R.string.home_live_tv_default), Icons.Default.LiveTv, TileKind.LIVE, isDark, Modifier.weight(1f).fillMaxHeight().focusRequester(liveTileFocusRequester), height = null, onClick = onOpenLive)
@@ -3448,10 +3449,10 @@ private fun ContinueCard(item: PlaylistItem?, modifier: Modifier = Modifier, onC
         Box(
             Modifier.fillMaxSize().background(
                 Brush.horizontalGradient(
-                    0f to scrim.copy(alpha = .97f),
-                    .52f to scrim.copy(alpha = .92f),
-                    .78f to scrim.copy(alpha = .55f),
-                    1f to scrim.copy(alpha = .22f)
+                    0f to scrim.copy(alpha = .78f),
+                    .52f to scrim.copy(alpha = .68f),
+                    .78f to scrim.copy(alpha = .32f),
+                    1f to scrim.copy(alpha = .08f)
                 )
             )
         )
