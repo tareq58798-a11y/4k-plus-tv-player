@@ -3614,7 +3614,7 @@ private fun HomeTile(
             .then(pressFeedback(onClick))
     ) {
         Column(Modifier.fillMaxSize().padding(14.dp), verticalArrangement = Arrangement.SpaceBetween) {
-            Icon(icon, null, tint = palette.icon, modifier = Modifier.size(26.dp))
+            Icon(icon, null, tint = palette.icon, modifier = Modifier.size(40.dp))
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(title, fontSize = 16.sp, fontWeight = FontWeight.Bold, color = palette.title, maxLines = 1)
                 Text(subtitle, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = palette.subtitle, maxLines = 1)
