@@ -20,22 +20,6 @@ android {
         versionName = "1.0"
     }
 
-    // "mobile" is the existing phone/tablet app, unchanged. "tv" reuses the exact same source —
-    // its landscape screens are already built for a 16:9 layout — and only adds what Android TV
-    // requires: a Leanback launcher entry, a fixed landscape orientation, no touchscreen
-    // requirement, and a separate applicationId so both can be installed side by side.
-    flavorDimensions += "platform"
-    productFlavors {
-        create("mobile") {
-            dimension = "platform"
-        }
-        create("tv") {
-            dimension = "platform"
-            applicationIdSuffix = ".tv"
-            versionNameSuffix = "-tv"
-        }
-    }
-
     buildFeatures { compose = true }
 
     compileOptions {
