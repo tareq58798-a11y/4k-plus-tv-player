@@ -2614,7 +2614,18 @@ private fun LiveTvScreen(
     // from "returning from fullscreen" (focus should land back on the channel that was playing) —
     // see the landscape branch below.
     var hasOpenedFullscreenOnce by remember { mutableStateOf(false) }
+    // Guards against a stray reactivation landing on the channel row right as it regains focus
+    // when exiting fullscreen (OK/Back/double-tap) - the row's own OK press enters fullscreen
+    // directly on TV (see LandscapeLiveBrowser below), and that row is exactly what focus moves
+    // back onto, so a leftover key-up event from the very button that just closed fullscreen can
+    // otherwise be read as a fresh press on it, reopening fullscreen a moment later.
+    var lastFullscreenExitAt by remember { mutableLongStateOf(0L) }
+    fun exitFullscreen() {
+        lastFullscreenExitAt = android.os.SystemClock.uptimeMillis()
+        immersiveFullscreen = false
+    }
     fun enterFullscreen() {
+        if (android.os.SystemClock.uptimeMillis() - lastFullscreenExitAt < 400L) return
         hasOpenedFullscreenOnce = true
         immersiveFullscreen = true
     }
@@ -2705,7 +2716,7 @@ private fun LiveTvScreen(
                 // Live TV's TV fullscreen has no on-screen controls (see PlaybackOptionsOverlay in
                 // LiveChannelPreview), so Back always exits it directly — no "hide controls first"
                 // stage needed the way movies/series playback has.
-                if (immersiveFullscreen) BackHandler { immersiveFullscreen = false }
+                if (immersiveFullscreen) BackHandler { exitFullscreen() }
                 val fullscreenChannelList = remember(channels, previewChannel, selectedCategory) {
                     channels.filter { it.group == (previewChannel?.group ?: selectedCategory) }
                 }
@@ -2717,9 +2728,9 @@ private fun LiveTvScreen(
                         onChannelChange = { rememberChannel(it) },
                         autoAdvanceOnFailure = true,
                         hostedFullscreen = immersiveFullscreen,
-                        onFullscreenDoubleTap = if (immersiveFullscreen) ({ immersiveFullscreen = false }) else null,
+                        onFullscreenDoubleTap = if (immersiveFullscreen) (::exitFullscreen) else null,
                         onRequestFullscreen = if (!immersiveFullscreen) (::enterFullscreen) else null,
-                        onExitFullscreen = if (immersiveFullscreen) ({ immersiveFullscreen = false }) else null
+                        onExitFullscreen = if (immersiveFullscreen) (::exitFullscreen) else null
                     )
                     if (!immersiveFullscreen) {
                         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .36f)))
