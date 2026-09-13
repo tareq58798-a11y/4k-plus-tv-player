@@ -7,6 +7,8 @@ import java.nio.charset.StandardCharsets
 import java.util.Base64
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -175,7 +177,7 @@ internal class XtreamProviderClient {
         throw lastError ?: IllegalArgumentException("The playlist address could not be reached.")
     }
 
-    private fun loadProvider(input: PlaylistInput): LoadedPlaylist {
+    private suspend fun loadProvider(input: PlaylistInput): LoadedPlaylist {
         var lastError: Exception? = null
         for (server in addressCandidates(input.address).map(::normalizeServerBase)) {
             try { return loadProviderFromServer(input, server) }
@@ -184,7 +186,7 @@ internal class XtreamProviderClient {
         throw lastError ?: IllegalArgumentException("The provider could not be reached.")
     }
 
-    private fun loadProviderFromServer(input: PlaylistInput, server: String): LoadedPlaylist {
+    private suspend fun loadProviderFromServer(input: PlaylistInput, server: String): LoadedPlaylist = coroutineScope {
         val auth = JSONObject(download(apiUrl(server, input, null)).trimStart(Char(0xFEFF)))
         val userInfo = auth.optJSONObject("user_info")
             ?: throw IllegalArgumentException("This server did not return a compatible provider login response.")
@@ -194,18 +196,27 @@ internal class XtreamProviderClient {
             "The provider rejected this username or password, or the account is inactive."
         }
 
-        val liveCategories = runCatching { categories(apiUrl(server, input, "get_live_categories")) }.getOrDefault(emptyMap())
-        val movieCategories = runCatching { categories(apiUrl(server, input, "get_vod_categories")) }.getOrDefault(emptyMap())
-        val seriesCategories = runCatching { categories(apiUrl(server, input, "get_series_categories")) }.getOrDefault(emptyMap())
+        // These six requests are all independent of each other (categories are only needed to
+        // label items once the lists come back), so firing them together instead of one after
+        // another cuts total load time from their sum down to roughly the slowest single one -
+        // significant here since get_vod_streams/get_series responses can be tens of thousands
+        // of entries and several megabytes each.
+        val liveCategoriesDeferred = async { runCatching { categories(apiUrl(server, input, "get_live_categories")) }.getOrDefault(emptyMap()) }
+        val movieCategoriesDeferred = async { runCatching { categories(apiUrl(server, input, "get_vod_categories")) }.getOrDefault(emptyMap()) }
+        val seriesCategoriesDeferred = async { runCatching { categories(apiUrl(server, input, "get_series_categories")) }.getOrDefault(emptyMap()) }
+        val liveStreamsDeferred = async { JSONArray(download(apiUrl(server, input, "get_live_streams"))) }
+        val movieStreamsDeferred = async { JSONArray(download(apiUrl(server, input, "get_vod_streams"))) }
+        val seriesDeferred = async { JSONArray(download(apiUrl(server, input, "get_series"))) }
+
         val items = buildList {
-            addAll(liveItems(JSONArray(download(apiUrl(server, input, "get_live_streams"))), liveCategories, server, input))
-            addAll(movieItems(JSONArray(download(apiUrl(server, input, "get_vod_streams"))), movieCategories, server, input))
-            addAll(seriesItems(JSONArray(download(apiUrl(server, input, "get_series"))), seriesCategories))
+            addAll(liveItems(liveStreamsDeferred.await(), liveCategoriesDeferred.await(), server, input))
+            addAll(movieItems(movieStreamsDeferred.await(), movieCategoriesDeferred.await(), server, input))
+            addAll(seriesItems(seriesDeferred.await(), seriesCategoriesDeferred.await()))
         }
         require(items.isNotEmpty()) { "The account connected successfully but contains no available content." }
         val expiry = userInfo.optString("exp_date").toLongOrNull()?.takeIf { it > 0L }
             ?: userInfo.optLong("exp_date", 0L).takeIf { it > 0L }
-        return LoadedPlaylist(
+        LoadedPlaylist(
             name = input.name.trim(),
             items = items,
             groups = items.map { it.group }.distinct(),

@@ -590,6 +590,7 @@ private fun SeriesSearch(value: String, onChange: (String) -> Unit) {
         return
     }
     var active by remember { mutableStateOf(false) }
+    var hasFocusedOnce by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     if (active) {
@@ -597,7 +598,13 @@ private fun SeriesSearch(value: String, onChange: (String) -> Unit) {
             value = value,
             onValueChange = onChange,
             modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
-                .onFocusChanged { if (!it.isFocused) active = false },
+                .onFocusChanged {
+                    // See MainActivity's SearchField for why this can't just be !it.isFocused:
+                    // the pre-requestFocus() unfocused callback would otherwise undo activation
+                    // before the user gets a chance to type.
+                    if (it.isFocused) hasFocusedOnce = true
+                    else if (hasFocusedOnce) active = false
+                },
             singleLine = true,
             shape = RoundedCornerShape(15.dp),
             placeholder = { Text(stringResource(R.string.search_all_series)) },
@@ -615,7 +622,7 @@ private fun SeriesSearch(value: String, onChange: (String) -> Unit) {
         }
     } else {
         Surface(
-            modifier = Modifier.fillMaxWidth().focusableClickable(cornerRadius = 15.dp) { active = true },
+            modifier = Modifier.fillMaxWidth().focusableClickable(cornerRadius = 15.dp) { hasFocusedOnce = false; active = true },
             shape = RoundedCornerShape(15.dp),
             color = Color.Transparent,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -776,6 +783,14 @@ private fun SeriesDetails(
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val trailerSearchTerm = stringResource(R.string.trailer_search_term)
     val trailerQuery = listOfNotNull(details?.originalTitle ?: series.name, details?.year, trailerSearchTerm).joinToString(" ")
+    // Series details has no single Play/Resume button the way movies do - playback always starts
+    // from a specific episode - so the nearest equivalent is landing D-pad focus on the first
+    // episode row once the page (and its episode list) has actually loaded.
+    val isTv = remember { context.isTvDevice() }
+    val firstEpisodeFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(series, episodes.firstOrNull()?.id, isTv) {
+        if (isTv && episodes.isNotEmpty()) runCatching { firstEpisodeFocusRequester.requestFocus() }
+    }
 
     @Composable
     fun SeasonsAndEpisodes() {
@@ -794,11 +809,12 @@ private fun SeriesDetails(
                 }
             }
             Text(stringResource(R.string.episodes_label), fontSize = 20.sp, fontWeight = FontWeight.Bold)
-            episodes.forEach { episode ->
+            episodes.forEachIndexed { index, episode ->
                 EpisodeRow(
                     episode = episode,
                     progress = progress[episode.id] ?: 0L,
                     watched = episode.id in watchedEpisodeIds,
+                    focusRequester = if (index == 0) firstEpisodeFocusRequester else null,
                     onClick = { onEpisode(episode) }
                 )
             }
@@ -949,14 +965,14 @@ private fun SeriesDetails(
 }
 
 @Composable
-private fun EpisodeRow(episode: SeriesEpisode, progress: Long, watched: Boolean, onClick: () -> Unit) {
+private fun EpisodeRow(episode: SeriesEpisode, progress: Long, watched: Boolean, focusRequester: FocusRequester? = null, onClick: () -> Unit) {
     val durationMs = remember(episode.duration) { parseDurationToMillis(episode.duration) }
     val watchedFraction = if (progress > 0L && durationMs != null && durationMs > 0L) {
         (progress.toFloat() / durationMs).coerceIn(0f, 1f)
     } else null
     ElevatedCard(
         onClick = onClick,
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier),
         shape = RoundedCornerShape(15.dp),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = .95f))
     ) {

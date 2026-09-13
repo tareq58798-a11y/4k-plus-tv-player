@@ -142,7 +142,10 @@ internal fun LiveSnapshotEffect(streamUrl: String, onResult: (Bitmap?) -> Unit) 
             player.setMediaItem(MediaItem.fromUri(streamUrl))
             player.prepare()
             player.playWhenReady = true
-            withTimeoutOrNull(12_000) { completion.await() }
+            // Capture is serialized (see the mutex above) so a slow/dead channel here delays
+            // every other card's thumbnail queued behind it - a shorter timeout keeps a single
+            // bad stream from stalling the whole Recently Watched row for several seconds.
+            withTimeoutOrNull(6_000) { completion.await() }
             finishOnce(null)
         }
     }
@@ -306,6 +309,14 @@ internal fun MoviePlayer(
     LaunchedEffect(isTv, controllerVisible, relatedStripExpanded) {
         if (isTv && !controllerVisible && !relatedStripExpanded) runCatching { rootFocusRequester.requestFocus() }
     }
+    // Lands the remote's focus on the play/pause button itself whenever the controller becomes
+    // visible - entering fullscreen, or bringing the controls back up with OK - instead of
+    // leaving it wherever Android's default "first focusable view" guess happens to land.
+    LaunchedEffect(isTv, controllerVisible, playerViewRef) {
+        if (isTv && controllerVisible) {
+            runCatching { playerViewRef?.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_play_pause)?.requestFocus() }
+        }
+    }
     // Back-hides-controls-first is implemented by overriding dispatchKeyEvent on the PlayerView
     // itself (see its factory below), not a Compose BackHandler here: media3's controller buttons
     // are real focusable native children, and once one of them holds Android focus, a raw Back
@@ -408,6 +419,7 @@ internal fun MoviePlayer(
                         setControllerVisibilityListener(
                             PlayerView.ControllerVisibilityListener { visibility ->
                                 controllerVisible = visibility == android.view.View.VISIBLE
+                                if (isTv && visibility == android.view.View.VISIBLE) applyTvControlFocusHighlight(this)
                             }
                         )
                         resizeMode = videoResizeMode
@@ -421,6 +433,7 @@ internal fun MoviePlayer(
                             seekFeedback = forward to System.nanoTime()
                         }
                         playerViewRef = this
+                        if (isTv) applyTvControlFocusHighlight(this)
                     }
                 },
                 update = {
@@ -641,6 +654,23 @@ private fun FullscreenPlayerDialog(
                 portrait
             )
         }
+    }
+}
+
+/** Paints a blue D-pad focus ring on media3's native controller buttons (play/pause, rewind,
+ *  fast-forward) - plain Android Views, so they can't use the app's usual cyan Compose
+ *  drawFocusRing modifier. Safe to call repeatedly: findViewById just returns null for any ID
+ *  the current controller layout doesn't have. */
+private fun applyTvControlFocusHighlight(view: PlayerView) {
+    val ids = intArrayOf(
+        androidx.media3.ui.R.id.exo_play_pause,
+        androidx.media3.ui.R.id.exo_rew_with_amount,
+        androidx.media3.ui.R.id.exo_ffwd_with_amount,
+        androidx.media3.ui.R.id.exo_rew,
+        androidx.media3.ui.R.id.exo_ffwd
+    )
+    for (id in ids) {
+        view.findViewById<android.view.View>(id)?.background = view.context.getDrawable(R.drawable.exo_control_focus_selector)
     }
 }
 

@@ -184,7 +184,7 @@ private fun App() {
     var screen by remember { mutableStateOf(Screen.LOADING) }
     var showExitConfirm by remember { mutableStateOf(false) }
     var resumeRequest by remember { mutableStateOf<ResumeRequest?>(null) }
-    var themeChoice by remember { mutableStateOf(ThemeChoice.SYSTEM) }
+    var themeChoice by remember { mutableStateOf(ThemeChoice.DARK) }
     val useDark = when (themeChoice) {
         ThemeChoice.SYSTEM -> androidx.compose.foundation.isSystemInDarkTheme()
         ThemeChoice.LIGHT -> false
@@ -267,8 +267,8 @@ private fun App() {
 
     LaunchedEffect(Unit) {
         themeChoice = runCatching {
-            ThemeChoice.valueOf(appPreferences.getString("theme", ThemeChoice.SYSTEM.name).orEmpty())
-        }.getOrDefault(ThemeChoice.SYSTEM)
+            ThemeChoice.valueOf(appPreferences.getString("theme", ThemeChoice.DARK.name).orEmpty())
+        }.getOrDefault(ThemeChoice.DARK)
     }
 
     // Meaningless on TV: there's no touch screen to rotate and the device is permanently
@@ -1265,13 +1265,15 @@ private fun HomeScreen(
                             HomeTile(stringResource(R.string.nav_movies), playlist?.let { stringResource(R.string.home_movies_count, it.movieCount) } ?: stringResource(R.string.home_movies_default), Icons.Default.Movie, TileKind.MOVIES, isDark, Modifier.weight(1f).fillMaxHeight(), height = null, onClick = onOpenMovies)
                             HomeTile(stringResource(R.string.nav_series), playlist?.let { stringResource(R.string.home_series_count, it.seriesCount) } ?: stringResource(R.string.home_series_default), Icons.Default.VideoLibrary, TileKind.SERIES, isDark, Modifier.weight(1f).fillMaxHeight(), height = null, onClick = onOpenSeries)
                         }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = liveShelfHeader)
                         if (featuredPreviews.isNotEmpty()) {
-                            HomeCompactShelfHeader(stringResource(R.string.home_recently_watched_live), isDark, onOpenLive)
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 items(featuredPreviews, key = { (channel, _) -> "recent_live_" + channelKey(channel) }) { (channel, preview) ->
-                                    RecentLiveCard(channel, preview, width = 88.dp) { onContinueWatching(channel, null) }
+                                    RecentLiveCard(channel, preview) { onContinueWatching(channel, null) }
                                 }
                             }
+                        } else {
+                            Text(noViewingHistoryYet, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         HomeCompactDeviceInfo(playlist)
                     }
@@ -1460,23 +1462,6 @@ private fun RecentLiveCard(
                 maxLines = 1
             )
         }
-    }
-}
-
-/** Compact "title / See all" row shared by Home's landscape shelves — a smaller, single-line
- *  version of [liveShelfHeader] so three of these stacked (Live, Movies, Series) still fit under
- *  the Live TV/Movies/Series tiles without crowding the fixed landscape height. */
-@Composable
-private fun HomeCompactShelfHeader(title: String, isDark: Boolean, onSeeAll: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(title, Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-        Text(
-            stringResource(R.string.action_see_all),
-            Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onSeeAll).padding(horizontal = 5.dp, vertical = 2.dp),
-            color = if (isDark) Cyan else BrandBlue,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.SemiBold
-        )
     }
 }
 
@@ -2117,7 +2102,14 @@ private fun LandscapeLiveBrowser(
                                 .onFocusChanged { if (!it.isFocused) lastActivationAt = 0L }
                                 .focusableClickable(
                                     cornerRadius = 9.dp,
-                                    onLongClick = openFullscreen,
+                                    // Press-and-hold OK toggles favorite - the star icon in this
+                                    // row is a real Compose click target, but D-pad focus can't
+                                    // reach into it independently of the row itself, so it was
+                                    // effectively touch-only. Long-press already opening
+                                    // fullscreen here was redundant on TV (a single OK press
+                                    // already does that below), so this reassignment doesn't
+                                    // lose that behavior - double-tap still covers it for touch.
+                                    onLongClick = { onFavorite(channel) },
                                     onDoubleClick = openFullscreen
                                 ) {
                                     if (isTv) {
@@ -2311,6 +2303,11 @@ private fun MovieDetails(
     val displayTitle = details?.originalTitle ?: movie.name
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val trailerQuery = listOfNotNull(details?.originalTitle ?: movie.name, year, "official trailer").joinToString(" ")
+    val isTv = remember { context.isTvDevice() }
+    val playFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(movie, isTv) {
+        if (isTv) runCatching { playFocusRequester.requestFocus() }
+    }
 
     if (landscape) {
         // TV has the full screen width to work with, so poster/actions/pills sit in a fixed-width
@@ -2327,7 +2324,7 @@ private fun MovieDetails(
                 ) {
                     if (!poster.isNullOrBlank()) AsyncImage(poster, movie.name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
                 }
-                Button(onClick = onPlay, modifier = Modifier.fillMaxWidth().height(46.dp)) {
+                Button(onClick = onPlay, modifier = Modifier.fillMaxWidth().height(46.dp).focusRequester(playFocusRequester)) {
                     Icon(if (resumePosition > 0L) Icons.Default.Replay else Icons.Default.PlayArrow, null)
                     Spacer(Modifier.width(7.dp))
                     Text(if (resumePosition > 0L) stringResource(R.string.resume_time, formatPlaybackTime(resumePosition)) else stringResource(R.string.play_action))
@@ -2998,6 +2995,7 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, placehol
         return
     }
     var active by remember { mutableStateOf(false) }
+    var hasFocusedOnce by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     if (active) {
@@ -3005,7 +3003,16 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, placehol
             value = value,
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
-                .onFocusChanged { if (!it.isFocused) active = false },
+                .onFocusChanged {
+                    // The field's own requestFocus() below hasn't run yet on the very first
+                    // callback after activating (Compose reports the pre-request unfocused
+                    // state first) - collapsing back to the summary view on THAT would undo
+                    // activation before the user ever got a chance to type, which read as "OK
+                    // does nothing" on the search bar. Only a real loss of focus (after it was
+                    // actually gained once) should deactivate it.
+                    if (it.isFocused) hasFocusedOnce = true
+                    else if (hasFocusedOnce) active = false
+                },
             singleLine = true,
             shape = RoundedCornerShape(15.dp),
             leadingIcon = { Icon(Icons.Default.Search, null) },
@@ -3023,7 +3030,7 @@ private fun SearchField(value: String, onValueChange: (String) -> Unit, placehol
         }
     } else {
         Surface(
-            modifier = Modifier.fillMaxWidth().focusableClickable(cornerRadius = 15.dp) { active = true },
+            modifier = Modifier.fillMaxWidth().focusableClickable(cornerRadius = 15.dp) { hasFocusedOnce = false; active = true },
             shape = RoundedCornerShape(15.dp),
             color = Color.Transparent,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -3068,6 +3075,7 @@ private fun DarkTvSearchField(
         return
     }
     var active by remember { mutableStateOf(false) }
+    var hasFocusedOnce by remember { mutableStateOf(false) }
     val focusRequester = remember { FocusRequester() }
     val keyboard = LocalSoftwareKeyboardController.current
     if (active) {
@@ -3078,7 +3086,12 @@ private fun DarkTvSearchField(
             singleLine = true,
             colors = colors,
             textStyle = androidx.compose.ui.text.TextStyle(fontSize = fontSize),
-            modifier = modifier.focusRequester(focusRequester).onFocusChanged { if (!it.isFocused) active = false },
+            modifier = modifier.focusRequester(focusRequester).onFocusChanged {
+                // See SearchField's identical guard: the pre-requestFocus() unfocused callback
+                // must not be treated as "the user navigated away," or activating never sticks.
+                if (it.isFocused) hasFocusedOnce = true
+                else if (hasFocusedOnce) active = false
+            },
             keyboardActions = KeyboardActions(onDone = { keyboard?.hide(); active = false })
         )
         LaunchedEffect(Unit) {
@@ -3087,7 +3100,7 @@ private fun DarkTvSearchField(
         }
     } else {
         Surface(
-            modifier = modifier.focusableClickable(cornerRadius = 4.dp) { active = true },
+            modifier = modifier.focusableClickable(cornerRadius = 4.dp) { hasFocusedOnce = false; active = true },
             shape = RoundedCornerShape(4.dp),
             color = Color.Transparent,
             border = BorderStroke(1.dp, Color.White.copy(alpha = .3f))
