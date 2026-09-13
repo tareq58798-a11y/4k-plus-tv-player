@@ -85,6 +85,7 @@
     <string name="playlist_could_not_be_loaded">The playlist could not be loaded.</string>
     <string name="not_a_media_provider">4K Plus TV Player is a media player and does not include or provide content.</string>
     <string name="loading_your_playlist">Loading your playlist…</string>
+    <string name="loading_playlist_from_network">Connecting to your provider…</string>
 
     <!-- Playlist manager -->
     <string name="playlists_title">Playlists</string>

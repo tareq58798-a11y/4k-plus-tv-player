@@ -341,6 +341,18 @@ private fun App() {
                     ) {
                         CircularProgressIndicator(color = Cyan)
                         Text(stringResource(R.string.loading_your_playlist), fontWeight = FontWeight.SemiBold)
+                        // Distinguishes "reading the saved copy" (should be quick) from "this
+                        // restart has no saved copy and is genuinely re-fetching over the
+                        // network" (only as fast as the provider responds) - both show the same
+                        // spinner otherwise, so a slow startup is otherwise impossible to tell
+                        // apart from a healthy cache read just taking its normal course.
+                        if (playlistUiState.bootstrappingFromNetwork) {
+                            Text(
+                                stringResource(R.string.loading_playlist_from_network),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
                 Screen.ACTIVATION -> ActivationScreen(

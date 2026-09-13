@@ -31,7 +31,11 @@ class PlaylistViewModel(private val repository: PlaylistRepository) : ViewModel(
         val savedPlaylists: List<PlaylistInput> = emptyList(),
         val activeSource: PlaylistInput? = null,
         val bootstrapping: Boolean = true,
-        val bootstrapFailed: Boolean = false
+        val bootstrapFailed: Boolean = false,
+        // Surfaced on the loading screen so it's visible (not just inferred) whether a slow
+        // startup is reading the on-disk cache or genuinely re-fetching from the provider -
+        // the two look identical to a user watching the same spinner either way.
+        val bootstrappingFromNetwork: Boolean = false
     )
 
     private val _uiState = MutableStateFlow(PlaylistUiState())
@@ -60,6 +64,7 @@ class PlaylistViewModel(private val repository: PlaylistRepository) : ViewModel(
                     it.copy(loadedPlaylist = cached, activeSource = activeSource, savedPlaylists = repository.savedSources(), bootstrapping = false)
                 }
             } else {
+                _uiState.update { it.copy(bootstrappingFromNetwork = true) }
                 repository.load(activeSource)
                     .onSuccess { playlist ->
                         memoryCache[memoryKey(activeSource)] = playlist
