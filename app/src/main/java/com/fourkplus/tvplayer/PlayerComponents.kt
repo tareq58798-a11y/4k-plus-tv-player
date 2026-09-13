@@ -159,11 +159,20 @@ private fun RelatedItemsStrip(
     items: List<PlaylistItem>,
     currentKey: String,
     onSelect: (PlaylistItem) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onCollapse: () -> Unit = {}
 ) {
     if (items.size <= 1) return
     LazyRow(
-        modifier = modifier,
+        modifier = modifier.onKeyEvent { keyEvent ->
+            // Up is the strip's own "close" gesture, mirroring the swipe-down that collapses it
+            // on touch - without this, D-pad up while an item here is focused does nothing at
+            // all, since there's no focusable sibling above the strip for focus to land on.
+            if (keyEvent.type == KeyEventType.KeyDown && keyEvent.key == Key.DirectionUp) {
+                onCollapse()
+                true
+            } else false
+        },
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 6.dp)
     ) {
@@ -292,8 +301,10 @@ internal fun MoviePlayer(
     // just flipping the Compose `controllerVisible` var wouldn't touch the real View.
     var playerViewRef by remember { mutableStateOf<PlayerView?>(null) }
     val rootFocusRequester = remember { FocusRequester() }
-    LaunchedEffect(isTv, controllerVisible) {
-        if (isTv && !controllerVisible) runCatching { rootFocusRequester.requestFocus() }
+    // Re-requested whenever the strip closes too, since focus moves into it while it's open
+    // (see RelatedItemsStrip) and this effect otherwise only reruns on controllerVisible.
+    LaunchedEffect(isTv, controllerVisible, relatedStripExpanded) {
+        if (isTv && !controllerVisible && !relatedStripExpanded) runCatching { rootFocusRequester.requestFocus() }
     }
     // Back-hides-controls-first is implemented by overriding dispatchKeyEvent on the PlayerView
     // itself (see its factory below), not a Compose BackHandler here: media3's controller buttons
@@ -491,7 +502,8 @@ internal fun MoviePlayer(
                     RelatedItemsStrip(
                         items = relatedItems,
                         currentKey = channelKey(movie),
-                        onSelect = onRelatedItemChange
+                        onSelect = onRelatedItemChange,
+                        onCollapse = { relatedStripExpanded = false }
                     )
                 }
             }
@@ -522,6 +534,7 @@ internal fun MoviePlayer(
                         items = relatedItems,
                         currentKey = channelKey(movie),
                         onSelect = onRelatedItemChange,
+                        onCollapse = { relatedStripExpanded = false },
                         modifier = Modifier.fillMaxWidth()
                     )
                 } else if (controllerVisible) {
@@ -1330,7 +1343,8 @@ internal fun LiveChannelPreview(
                         RelatedItemsStrip(
                             items = channelList,
                             currentKey = channel.let(::channelKey),
-                            onSelect = onChannelChange
+                            onSelect = onChannelChange,
+                            onCollapse = { stripExpanded = false }
                         )
                     }
                 }
@@ -1360,6 +1374,7 @@ internal fun LiveChannelPreview(
                                 items = channelList,
                                 currentKey = channel?.let(::channelKey).orEmpty(),
                                 onSelect = onChannelChange,
+                                onCollapse = { stripExpanded = false },
                                 modifier = Modifier.fillMaxWidth()
                             )
                         } else if (controllerVisible) {
