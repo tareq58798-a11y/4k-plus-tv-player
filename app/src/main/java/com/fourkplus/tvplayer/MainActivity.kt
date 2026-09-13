@@ -40,6 +40,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -410,6 +411,14 @@ private fun App() {
                     onSearch = { screen = Screen.SEARCH },
                     onContinueWatching = { item, episodeId ->
                         resumeRequest = ResumeRequest(channelKey(item), episodeId, autoPlay = true)
+                        screen = when (item.kind) {
+                            MediaKind.LIVE -> Screen.LIVE_TV
+                            MediaKind.MOVIE -> Screen.MOVIES
+                            MediaKind.SERIES -> Screen.SERIES
+                        }
+                    },
+                    onOpenItem = { item ->
+                        resumeRequest = ResumeRequest(channelKey(item), autoPlay = false)
                         screen = when (item.kind) {
                             MediaKind.LIVE -> Screen.LIVE_TV
                             MediaKind.MOVIE -> Screen.MOVIES
@@ -1142,6 +1151,7 @@ private fun HomeScreen(
     onOpenSeries: () -> Unit,
     onSearch: () -> Unit,
     onContinueWatching: (PlaylistItem, String?) -> Unit,
+    onOpenItem: (PlaylistItem) -> Unit,
     onMessage: (String) -> Unit
 ) {
     var visible by remember { mutableStateOf(false) }
@@ -1173,6 +1183,8 @@ private fun HomeScreen(
         recentLiveIds.mapNotNull { id -> liveChannels.firstOrNull { channelKey(it) == id } }
     }
     val featured = remember(recentlyWatchedLive) { recentlyWatchedLive.take(12) }
+    val recentMovies = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.MOVIE }?.take(12).orEmpty() }
+    val recentSeries = remember(playlist) { playlist?.items?.filter { it.kind == MediaKind.SERIES }?.take(12).orEmpty() }
     // Duplicate logo URLs (common with low-quality playlists) collapse to a generated placeholder
     // per card below, so recently watched channels never look like copies of each other.
     val featuredPreviews = remember(featured) {
@@ -1228,18 +1240,20 @@ private fun HomeScreen(
             // column and a browse column and let both fill the height instead of scrolling.
             Column(
                 Modifier.fillMaxSize().padding(horizontal = 26.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = header)
+                AutoSizeText(greeting, Modifier.fillMaxWidth(), maxFontSize = 22.sp, fontWeight = FontWeight.Black, letterSpacing = (-0.6).sp)
                 Row(
                     Modifier.fillMaxWidth().weight(1f),
                     horizontalArrangement = Arrangement.spacedBy(18.dp)
                 ) {
-                    Column(Modifier.weight(1.05f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        AutoSizeText(greeting, Modifier.fillMaxWidth(), maxFontSize = 24.sp, fontWeight = FontWeight.Black, letterSpacing = (-0.6).sp)
+                    // Both columns' first child is now the tile row / Continue Watching card, with
+                    // no per-column heading above either one, so their top edges line up.
+                    Column(Modifier.weight(1.05f).fillMaxHeight()) {
                         ContinueCard(
                             item = continueItem,
-                            modifier = Modifier.fillMaxWidth().weight(1f)
+                            modifier = Modifier.fillMaxWidth().fillMaxHeight()
                         ) {
                             if (continueItem != null) onContinueWatching(continueItem, continueEntry?.episodeId)
                             else onMessage(nothingToContinueYet)
@@ -1247,25 +1261,36 @@ private fun HomeScreen(
                     }
                     // No device-info bar here: it would crowd the fixed height, and the same values
                     // are on Settings > App & playlist information.
-                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(
+                        Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            HomeTile(stringResource(R.string.nav_live_tv), playlist?.let { stringResource(R.string.home_live_tv_count, it.liveCount) } ?: stringResource(R.string.home_live_tv_default), Icons.Default.LiveTv, TileKind.LIVE, isDark, Modifier.weight(1f).focusRequester(liveTileFocusRequester), 106.dp, onOpenLive)
-                            HomeTile(stringResource(R.string.nav_movies), playlist?.let { stringResource(R.string.home_movies_count, it.movieCount) } ?: stringResource(R.string.home_movies_default), Icons.Default.Movie, TileKind.MOVIES, isDark, Modifier.weight(1f), 106.dp, onOpenMovies)
-                            HomeTile(stringResource(R.string.nav_series), playlist?.let { stringResource(R.string.home_series_count, it.seriesCount) } ?: stringResource(R.string.home_series_default), Icons.Default.VideoLibrary, TileKind.SERIES, isDark, Modifier.weight(1f), 106.dp, onOpenSeries)
+                            HomeTile(stringResource(R.string.nav_live_tv), playlist?.let { stringResource(R.string.home_live_tv_count, it.liveCount) } ?: stringResource(R.string.home_live_tv_default), Icons.Default.LiveTv, TileKind.LIVE, isDark, Modifier.weight(1f).focusRequester(liveTileFocusRequester), 92.dp, onOpenLive)
+                            HomeTile(stringResource(R.string.nav_movies), playlist?.let { stringResource(R.string.home_movies_count, it.movieCount) } ?: stringResource(R.string.home_movies_default), Icons.Default.Movie, TileKind.MOVIES, isDark, Modifier.weight(1f), 92.dp, onOpenMovies)
+                            HomeTile(stringResource(R.string.nav_series), playlist?.let { stringResource(R.string.home_series_count, it.seriesCount) } ?: stringResource(R.string.home_series_default), Icons.Default.VideoLibrary, TileKind.SERIES, isDark, Modifier.weight(1f), 92.dp, onOpenSeries)
                         }
-                        Row(
-                            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            content = quickAccess
-                        )
                         if (featuredPreviews.isNotEmpty()) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, content = liveShelfHeader)
-                            LazyRow(
-                                Modifier.weight(1f),
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
+                            HomeCompactShelfHeader(stringResource(R.string.home_recently_watched_live), isDark, onOpenLive)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 items(featuredPreviews, key = { (channel, _) -> "recent_live_" + channelKey(channel) }) { (channel, preview) ->
-                                    RecentLiveCard(channel, preview, width = 124.dp, fillHeight = true) { onContinueWatching(channel, null) }
+                                    RecentLiveCard(channel, preview, width = 88.dp) { onContinueWatching(channel, null) }
+                                }
+                            }
+                        }
+                        if (recentMovies.isNotEmpty()) {
+                            HomeCompactShelfHeader(stringResource(R.string.nav_movies), isDark, onOpenMovies)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(recentMovies, key = { "recent_movie_" + channelKey(it) }) { movie ->
+                                    HomeMediaCard(movie.name, movie.logoUrl, Icons.Default.Movie, Orange, width = 56.dp) { onOpenItem(movie) }
+                                }
+                            }
+                        }
+                        if (recentSeries.isNotEmpty()) {
+                            HomeCompactShelfHeader(stringResource(R.string.nav_series), isDark, onOpenSeries)
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(recentSeries, key = { "recent_series_" + channelKey(it) }) { series ->
+                                    HomeMediaCard(series.name, series.logoUrl, Icons.Default.VideoLibrary, BrandBlue, width = 56.dp) { onOpenItem(series) }
                                 }
                             }
                         }
@@ -1455,6 +1480,43 @@ private fun RecentLiveCard(
                 maxLines = 1
             )
         }
+    }
+}
+
+/** Compact "title / See all" row shared by Home's landscape shelves — a smaller, single-line
+ *  version of [liveShelfHeader] so three of these stacked (Live, Movies, Series) still fit under
+ *  the Live TV/Movies/Series tiles without crowding the fixed landscape height. */
+@Composable
+private fun HomeCompactShelfHeader(title: String, isDark: Boolean, onSeeAll: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(title, Modifier.weight(1f), fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+        Text(
+            stringResource(R.string.action_see_all),
+            Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onSeeAll).padding(horizontal = 5.dp, vertical = 2.dp),
+            color = if (isDark) Cyan else BrandBlue,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.SemiBold
+        )
+    }
+}
+
+/** Small poster-plus-title card for Home's "recently added" movies/series shelves — a lighter
+ *  version of MovieGrid's/SeriesGrid's own poster cards (no favorite star, smaller) sized for
+ *  Home's tight landscape row rather than a full browse grid. */
+@Composable
+private fun HomeMediaCard(name: String, imageUrl: String?, icon: ImageVector, accent: Color, width: Dp, onClick: () -> Unit) {
+    Column(Modifier.width(width).then(pressFeedback(onClick)), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Surface(
+            Modifier.fillMaxWidth().aspectRatio(2f / 3f),
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant
+        ) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Icon(icon, null, tint = accent.copy(alpha = .55f), modifier = Modifier.size(20.dp))
+                if (!imageUrl.isNullOrBlank()) AsyncImage(imageUrl, name, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
+            }
+        }
+        Text(name, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
     }
 }
 
@@ -1872,6 +1934,13 @@ private fun LandscapeMovieBrowser(
     val isTv = remember { context.isTvDevice() }
     val continueWatchingFocusRequester = remember { FocusRequester() }
     LaunchedEffect(isTv) { if (isTv) runCatching { continueWatchingFocusRequester.requestFocus() } }
+    // Pressing OK on a category should move the remote's focus straight into that category's
+    // grid rather than leaving it on the category button — 0 means "not from a press yet".
+    var categorySelectionTick by remember { mutableIntStateOf(0) }
+    val firstItemFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(categorySelectionTick) {
+        if (categorySelectionTick > 0 && isTv) runCatching { firstItemFocusRequester.requestFocus() }
+    }
     Row(
         Modifier.fillMaxSize().padding(horizontal = if (isTv) 40.dp else 18.dp, vertical = if (isTv) 22.dp else 8.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1893,7 +1962,10 @@ private fun LandscapeMovieBrowser(
                         Surface(
                             modifier = Modifier.fillMaxWidth()
                                 .then(if (category == "Continue watching") Modifier.focusRequester(continueWatchingFocusRequester) else Modifier)
-                                .focusableClickable(cornerRadius = 11.dp) { onCategory(category) },
+                                .focusableClickable(cornerRadius = 11.dp) {
+                                    categorySelectionTick++
+                                    onCategory(category)
+                                },
                             shape = RoundedCornerShape(11.dp),
                             color = if (category == selectedCategory) Cyan.copy(alpha = .24f) else Color.Transparent
                         ) {
@@ -1913,7 +1985,7 @@ private fun LandscapeMovieBrowser(
         Column(Modifier.weight(1f).fillMaxHeight()) {
             Text(localizedSectionTitle(selectedCategory).ifBlank { stringResource(R.string.nav_movies) }, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1)
             Spacer(Modifier.height(6.dp))
-            MovieGrid(displayed, favoriteIds, onFavorite, onMovie, Modifier.weight(1f), true, progress)
+            MovieGrid(displayed, favoriteIds, onFavorite, onMovie, Modifier.weight(1f), true, progress, firstItemFocusRequester)
         }
     }
 }
@@ -2146,7 +2218,8 @@ private fun MovieGrid(
     onMovie: (PlaylistItem) -> Unit,
     modifier: Modifier,
     landscape: Boolean,
-    progress: Map<String, Long> = emptyMap()
+    progress: Map<String, Long> = emptyMap(),
+    firstItemFocusRequester: FocusRequester? = null
 ) {
     if (movies.isEmpty()) {
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.no_movies_match), color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -2156,8 +2229,12 @@ private fun MovieGrid(
             horizontalArrangement = Arrangement.spacedBy(if (landscape) 7.dp else 10.dp), verticalArrangement = Arrangement.spacedBy(if (landscape) 9.dp else 16.dp),
             contentPadding = PaddingValues(bottom = 20.dp)
         ) {
-            gridItems(movies) { movie ->
-                MoviePoster(movie, channelKey(movie) in favoriteIds, { onFavorite(movie) }, { onMovie(movie) }, watchedFraction = watchedFraction(movie, progress))
+            gridItemsIndexed(movies) { index, movie ->
+                MoviePoster(
+                    movie, channelKey(movie) in favoriteIds, { onFavorite(movie) }, { onMovie(movie) },
+                    modifier = if (index == 0 && firstItemFocusRequester != null) Modifier.focusRequester(firstItemFocusRequester) else Modifier,
+                    watchedFraction = watchedFraction(movie, progress)
+                )
             }
         }
     }
@@ -2261,18 +2338,18 @@ private fun MovieDetails(
                         )
                     }
                 }
+            }
+            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(displayTitle, fontSize = 24.sp, fontWeight = FontWeight.Black, lineHeight = 28.sp)
+                if (!details?.originalTitle.isNullOrBlank() && details?.originalTitle != movie.name) {
+                    Text(movie.name, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, maxLines = 2)
+                }
                 FlowRowPills {
                     rating?.let { MovieInfoPill("★ $it/10", Orange) }
                     year?.takeIf(String::isNotBlank)?.let { MovieInfoPill(it, Cyan) }
                     duration?.let { MovieInfoPill(it, BrandBlue) }
                     details?.genre?.takeIf(String::isNotBlank)?.let { MovieInfoPill(it, Cyan) }
                     MovieInfoPill(movie.group, BrandBlue)
-                }
-            }
-            Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(displayTitle, fontSize = 24.sp, fontWeight = FontWeight.Black, lineHeight = 28.sp)
-                if (!details?.originalTitle.isNullOrBlank() && details?.originalTitle != movie.name) {
-                    Text(movie.name, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp, maxLines = 2)
                 }
                 if (loading) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -2619,17 +2696,10 @@ private fun LiveTvScreen(
                     PictureInPictureCoordinator.aspectRatio = 16f / 9f
                     onDispose { if (immersiveFullscreen) PictureInPictureCoordinator.eligible = false }
                 }
-                // Owned here (rather than inside LiveChannelPreview) so this single BackHandler can
-                // decide "hide controls" vs "exit fullscreen" itself — two independent BackHandlers
-                // registered at the same Activity-level dispatcher (this isn't a Dialog, unlike
-                // MoviePlayer's fullscreen) don't reliably prioritize the more-nested one.
-                val fullscreenControllerVisible = remember { mutableStateOf(true) }
-                if (immersiveFullscreen) {
-                    BackHandler {
-                        if (fullscreenControllerVisible.value) fullscreenControllerVisible.value = false
-                        else immersiveFullscreen = false
-                    }
-                }
+                // Live TV's TV fullscreen has no on-screen controls (see PlaybackOptionsOverlay in
+                // LiveChannelPreview), so Back always exits it directly — no "hide controls first"
+                // stage needed the way movies/series playback has.
+                if (immersiveFullscreen) BackHandler { immersiveFullscreen = false }
                 val fullscreenChannelList = remember(channels, previewChannel, selectedCategory) {
                     channels.filter { it.group == (previewChannel?.group ?: selectedCategory) }
                 }
@@ -2642,8 +2712,7 @@ private fun LiveTvScreen(
                         autoAdvanceOnFailure = true,
                         hostedFullscreen = immersiveFullscreen,
                         onFullscreenDoubleTap = if (immersiveFullscreen) ({ immersiveFullscreen = false }) else null,
-                        onRequestFullscreen = if (!immersiveFullscreen) (::enterFullscreen) else null,
-                        controllerVisibleState = fullscreenControllerVisible
+                        onRequestFullscreen = if (!immersiveFullscreen) (::enterFullscreen) else null
                     )
                     if (!immersiveFullscreen) {
                         Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = .36f)))

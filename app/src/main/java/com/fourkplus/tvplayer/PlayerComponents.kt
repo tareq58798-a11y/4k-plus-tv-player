@@ -295,11 +295,11 @@ internal fun MoviePlayer(
     LaunchedEffect(isTv, controllerVisible) {
         if (isTv && !controllerVisible) runCatching { rootFocusRequester.requestFocus() }
     }
-    // Mirrors Live TV fullscreen: first Back press hides the controller, a second (once it's
-    // already hidden) falls through to the outer BackHandler that exits the player.
-    if (isTv) {
-        BackHandler(enabled = controllerVisible) { playerViewRef?.hideController() }
-    }
+    // Back-hides-controls-first is implemented by overriding dispatchKeyEvent on the PlayerView
+    // itself (see its factory below), not a Compose BackHandler here: media3's controller buttons
+    // are real focusable native children, and once one of them holds Android focus, a raw Back
+    // key press never reaches a BackHandler in this composable at all — it's consumed by that
+    // native view hierarchy (or falls through to the app's normal back handling) first.
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(movie) { mutableStateOf<Uri?>(null) }
     var skipSeconds by remember { mutableIntStateOf(settings.getInt("skip_seconds", 10).takeIf { it in listOf(5, 10, 15, 30, 60) } ?: 10) }
@@ -359,7 +359,7 @@ internal fun MoviePlayer(
                     .then(
                         if (isTv) {
                             Modifier.focusRequester(rootFocusRequester).focusable().onKeyEvent { keyEvent ->
-                                if (keyEvent.type != KeyEventType.KeyDown || controllerVisible) return@onKeyEvent false
+                                if (keyEvent.type != KeyEventType.KeyDown || controllerVisible || relatedStripExpanded) return@onKeyEvent false
                                 when (keyEvent.key) {
                                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { playerViewRef?.showController(); true }
                                     Key.DirectionDown -> {
@@ -373,7 +373,24 @@ internal fun MoviePlayer(
             ) {
             AndroidView(
                 factory = {
-                    PlayerView(it).apply {
+                    // A plain setOnKeyListener here would only ever fire while the PlayerView
+                    // itself is the focused view — but media3's own controller buttons (play/
+                    // pause, seek) are real focusable children, and once the controller is shown
+                    // one of THEM holds actual Android focus instead. dispatchKeyEvent is called
+                    // on this root view regardless of which descendant is focused, so overriding
+                    // it here is the only reliable place to intercept Back before either that
+                    // child or the system's default back handling ever sees it.
+                    object : PlayerView(it) {
+                        override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+                            if (isTv && event.keyCode == android.view.KeyEvent.KEYCODE_BACK &&
+                                event.action == android.view.KeyEvent.ACTION_UP && controllerVisible
+                            ) {
+                                hideController()
+                                return true
+                            }
+                            return super.dispatchKeyEvent(event)
+                        }
+                    }.apply {
                         useController = true
                         setShowPreviousButton(false)
                         setShowNextButton(false)
@@ -422,7 +439,7 @@ internal fun MoviePlayer(
                         .padding(horizontal = 34.dp)
                 )
             }
-            if (seekFeedback == null && !PictureInPictureCoordinator.active) PlaybackOptionsOverlay(
+            if (controllerVisible && seekFeedback == null && !PictureInPictureCoordinator.active) PlaybackOptionsOverlay(
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
                 player = player,
                 fullscreen = true,
@@ -981,17 +998,20 @@ internal fun LiveChannelPreview(
     // above), it's very likely already false from sitting idle in the background before the user
     // opened fullscreen. Force it back on at the moment fullscreen actually starts, the same as a
     // fresh player would, so there's a controls-visible window (and Back has something to hide).
-    LaunchedEffect(suggestionsEnabled) {
-        if (suggestionsEnabled) showControllerBriefly()
+    // Live TV's own TV fullscreen (hostedFullscreen) has no on-screen controls at all — see
+    // PlaybackOptionsOverlay below — so this only matters for the touch/mobile Dialog fullscreen.
+    LaunchedEffect(suggestionsEnabled, hostedFullscreen) {
+        if (suggestionsEnabled && !hostedFullscreen) showControllerBriefly()
     }
-    // D-pad focus target for the whole fullscreen surface: while the overlay controls are
-    // hidden, this is the only focusable thing on screen, so left/right/down/OK below reach it
-    // directly without the user having to navigate onto anything first. Re-requested whenever
-    // the controls hide again (they auto-hide after 4s, or on the first Back press — see below)
-    // so the remote keeps working without requiring another manual focus move.
+    // D-pad focus target for the whole fullscreen surface: on TV Live TV there's no controls
+    // overlay to gate on, so this is always the target; elsewhere it's only needed once the
+    // (touch-oriented) controls are hidden. Re-requested whenever the strip closes too, since
+    // focus moves into it while it's open (see RelatedItemsStrip).
     val rootFocusRequester = remember { FocusRequester() }
-    LaunchedEffect(suggestionsEnabled, controllerVisible) {
-        if (suggestionsEnabled && !controllerVisible) runCatching { rootFocusRequester.requestFocus() }
+    LaunchedEffect(suggestionsEnabled, controllerVisible, stripExpanded, hostedFullscreen) {
+        if (suggestionsEnabled && !stripExpanded && (hostedFullscreen || !controllerVisible)) {
+            runCatching { rootFocusRequester.requestFocus() }
+        }
     }
     var subtitlesEnabled by remember { mutableStateOf(settings.getBoolean("subtitles_enabled", true)) }
     var externalSubtitle by remember(channel?.streamUrl) { mutableStateOf<Uri?>(null) }
@@ -1080,14 +1100,10 @@ internal fun LiveChannelPreview(
     } else null
     // On TV, the first Back press while fullscreen should just dismiss the overlay controls
     // (matching how the on-screen "hide" gesture works for touch) — only a second Back press,
-    // once they're already hidden, should fall through to whatever exits fullscreen. Skipped
-    // when a caller supplies controllerVisibleState: that means it also owns a competing exit
-    // BackHandler of its own (Live TV's hostedFullscreen, not a Dialog), and two independent
-    // BackHandlers registered at the same Activity-level dispatcher don't reliably prioritize the
-    // inner one — that caller resolves both as a single decision itself instead (see LiveTvScreen).
-    // The plain `fullscreen` Dialog path below has its own separate window/dispatcher, so this
-    // still works correctly there.
-    if (suggestionsEnabled && controllerVisibleState == null) {
+    // once they're already hidden, should fall through to whatever exits fullscreen. Live TV's
+    // hostedFullscreen has no controls at all (see PlaybackOptionsOverlay below) so Back there
+    // always exits directly instead — LiveTvScreen owns that single-press BackHandler itself.
+    if (suggestionsEnabled && !hostedFullscreen && controllerVisibleState == null) {
         BackHandler(enabled = controllerVisible) { controllerVisible = false }
     }
     val playerContent: @Composable (Modifier, Shape) -> Unit = { contentModifier, shape ->
@@ -1097,9 +1113,19 @@ internal fun LiveChannelPreview(
                     .then(
                         if (suggestionsEnabled) {
                             Modifier.focusRequester(rootFocusRequester).focusable().onKeyEvent { keyEvent ->
-                                if (keyEvent.type != KeyEventType.KeyDown || channel == null || controllerVisible) return@onKeyEvent false
+                                // Once the strip is open, left/right/OK are its own D-pad
+                                // navigation — the active item already has focus (see
+                                // RelatedItemsStrip), so this must get out of the way instead of
+                                // switching the channel the instant the user nudges the highlight.
+                                if (keyEvent.type != KeyEventType.KeyDown || channel == null || stripExpanded) return@onKeyEvent false
+                                // Live TV's TV fullscreen has no controls overlay to gate on (see
+                                // PlaybackOptionsOverlay below); elsewhere (touch/mobile) these keys
+                                // only fire once the on-screen controls are hidden.
+                                if (!hostedFullscreen && controllerVisible) return@onKeyEvent false
                                 when (keyEvent.key) {
-                                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> { showControllerBriefly(); true }
+                                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                        if (hostedFullscreen) false else { showControllerBriefly(); true }
+                                    }
                                     Key.DirectionDown -> {
                                         if (channelList.size > 1) { stripExpanded = true; true } else false
                                     }
@@ -1228,10 +1254,13 @@ internal fun LiveChannelPreview(
                             .padding(horizontal = 34.dp)
                     )
                 }
-                if (controllerVisible && seekFeedback == null && !PictureInPictureCoordinator.active) PlaybackOptionsOverlay(
+                // Live TV's TV fullscreen has no on-screen controls at all — remote users get
+                // there entirely via D-pad (left/right to change channel, down for the channel
+                // strip), so there's nothing here to show or dismiss.
+                if (!hostedFullscreen && controllerVisible && seekFeedback == null && !PictureInPictureCoordinator.active) PlaybackOptionsOverlay(
                     modifier = Modifier.align(Alignment.TopEnd)
                         .then(
-                            if (fullscreen || hostedFullscreen) Modifier
+                            if (fullscreen) Modifier
                                 .windowInsetsPadding(WindowInsets.displayCutout)
                                 .padding(horizontal = 16.dp)
                             else Modifier

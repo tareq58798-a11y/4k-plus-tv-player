@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.itemsIndexed as gridItemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -501,6 +502,13 @@ private fun LandscapeSeriesBrowser(
     val isTv = remember { context.isTvDevice() }
     val continueWatchingFocusRequester = remember { FocusRequester() }
     LaunchedEffect(isTv) { if (isTv) runCatching { continueWatchingFocusRequester.requestFocus() } }
+    // Pressing OK on a category should move the remote's focus straight into that category's
+    // grid rather than leaving it on the category button — 0 means "not from a press yet".
+    var categorySelectionTick by remember { mutableIntStateOf(0) }
+    val firstItemFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(categorySelectionTick) {
+        if (categorySelectionTick > 0 && isTv) runCatching { firstItemFocusRequester.requestFocus() }
+    }
     Row(
         Modifier.fillMaxSize().padding(horizontal = if (isTv) 40.dp else 18.dp, vertical = if (isTv) 22.dp else 8.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -522,7 +530,10 @@ private fun LandscapeSeriesBrowser(
                         Surface(
                             modifier = Modifier.fillMaxWidth()
                                 .then(if (category == "Continue watching") Modifier.focusRequester(continueWatchingFocusRequester) else Modifier)
-                                .focusableClickable(cornerRadius = 11.dp) { onCategory(category) },
+                                .focusableClickable(cornerRadius = 11.dp) {
+                                    categorySelectionTick++
+                                    onCategory(category)
+                                },
                             shape = RoundedCornerShape(11.dp),
                             color = if (category == selectedCategory) Cyan.copy(alpha = .24f) else Color.Transparent
                         ) {
@@ -542,7 +553,7 @@ private fun LandscapeSeriesBrowser(
         Column(Modifier.weight(1f).fillMaxHeight()) {
             Text(localizedSectionTitle(selectedCategory).ifBlank { stringResource(R.string.nav_series) }, fontSize = 20.sp, fontWeight = FontWeight.Black, maxLines = 1)
             Spacer(Modifier.height(6.dp))
-            SeriesGrid(displayed, favoriteIds, onFavorite, onSeries, Modifier.weight(1f), true)
+            SeriesGrid(displayed, favoriteIds, onFavorite, onSeries, Modifier.weight(1f), true, firstItemFocusRequester)
         }
     }
 }
@@ -664,7 +675,8 @@ private fun SeriesGrid(
     onFavorite: (PlaylistItem) -> Unit,
     onSeries: (PlaylistItem) -> Unit,
     modifier: Modifier,
-    landscape: Boolean
+    landscape: Boolean,
+    firstItemFocusRequester: FocusRequester? = null
 ) {
     if (seriesItems.isEmpty()) {
         Box(modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
@@ -678,12 +690,13 @@ private fun SeriesGrid(
             verticalArrangement = Arrangement.spacedBy(if (landscape) 9.dp else 16.dp),
             contentPadding = PaddingValues(bottom = 20.dp)
         ) {
-            gridItems(seriesItems) { series ->
+            gridItemsIndexed(seriesItems) { index, series ->
                 SeriesPoster(
                     series,
                     channelKey(series) in favoriteIds,
                     { onFavorite(series) },
-                    { onSeries(series) }
+                    { onSeries(series) },
+                    modifier = if (index == 0 && firstItemFocusRequester != null) Modifier.focusRequester(firstItemFocusRequester) else Modifier
                 )
             }
         }
@@ -807,17 +820,17 @@ private fun SeriesDetails(
                         Icon(if (favorite) Icons.Default.Star else Icons.Default.StarBorder, if (favorite) stringResource(R.string.cd_favorite_remove) else stringResource(R.string.cd_favorite_add), tint = if (favorite) Orange else Cyan)
                     }
                 }
-                FlowRowPills {
-                    details?.rating?.takeIf { it != "0" && it != "0.0" }?.let { SeriesPill("★ $it/10", Orange) }
-                    details?.year?.takeIf(String::isNotBlank)?.let { SeriesPill(it, Cyan) }
-                    details?.genre?.takeIf(String::isNotBlank)?.let { SeriesPill(it, BrandBlue) }
-                    SeriesPill(series.group, Cyan)
-                }
             }
             Column(Modifier.weight(1f).fillMaxHeight().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(displayTitle, fontSize = 24.sp, fontWeight = FontWeight.Black, lineHeight = 28.sp)
                 if (!details?.originalTitle.isNullOrBlank() && details?.originalTitle != series.name) {
                     Text(series.name, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 14.sp)
+                }
+                FlowRowPills {
+                    details?.rating?.takeIf { it != "0" && it != "0.0" }?.let { SeriesPill("★ $it/10", Orange) }
+                    details?.year?.takeIf(String::isNotBlank)?.let { SeriesPill(it, Cyan) }
+                    details?.genre?.takeIf(String::isNotBlank)?.let { SeriesPill(it, BrandBlue) }
+                    SeriesPill(series.group, Cyan)
                 }
                 if (loading) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
