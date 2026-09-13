@@ -13,6 +13,8 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.core.Animatable
@@ -181,6 +183,23 @@ internal data class ResumeRequest(val itemKey: String, val episodeId: String? = 
 
 @Composable
 private fun App() {
+    val crashContext = LocalContext.current
+    // Reads back whatever installCrashLogger() (in FourKPlusApplication) saved the moment before
+    // the previous run died - there's no way to pull adb logcat off a user's own phone or TV
+    // remotely, so this is the only way to see what actually crashed instead of guessing from a
+    // bare "it crashed" report.
+    var crashLog by remember {
+        mutableStateOf(
+            runCatching { java.io.File(crashContext.filesDir, "last_crash.txt").takeIf { it.exists() }?.readText() }.getOrNull()
+        )
+    }
+    if (crashLog != null) {
+        LastCrashScreen(crashLog!!) {
+            runCatching { java.io.File(crashContext.filesDir, "last_crash.txt").delete() }
+            crashLog = null
+        }
+        return
+    }
     var screen by remember { mutableStateOf(Screen.LOADING) }
     var showExitConfirm by remember { mutableStateOf(false) }
     var resumeRequest by remember { mutableStateOf<ResumeRequest?>(null) }
@@ -193,7 +212,7 @@ private fun App() {
 
     val snackbar = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
-    val context = LocalContext.current
+    val context = crashContext
     val landscapeApp = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     DisposableEffect(landscapeApp) {
         val activity = context as? Activity
@@ -558,6 +577,36 @@ private fun App() {
             }
             }
         }
+        }
+    }
+}
+
+/** Shown once, on the launch right after a crash, instead of the normal app content -
+ *  FourKPlusApplication's uncaught-exception handler saves the stack trace to a file the instant
+ *  before the process actually dies, and this reads it back so the exact error is visible on the
+ *  device itself (screenshot-able) instead of only existing in a logcat nobody but the developer
+ *  sitting at that exact device with a USB cable could ever see. */
+@Composable
+private fun LastCrashScreen(crashLog: String, onDismiss: () -> Unit) {
+    PremiumBackground {
+        Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("The app crashed last time", fontSize = 22.sp, fontWeight = FontWeight.Black)
+            Text(
+                "Take a screenshot of the text below and send it over - it's the exact error, not just \"it crashed\".",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 13.sp
+            )
+            SelectionContainer(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
+                Text(
+                    crashLog,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            Button(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
+                Text("Continue to the app")
+            }
         }
     }
 }
