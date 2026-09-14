@@ -369,6 +369,10 @@ internal class XtreamProviderClient {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .callTimeout(60, TimeUnit.SECONDS)
+            // OkHttp's default Dispatcher caps concurrent requests at 5 per host, which silently
+            // queues the 6th of the parallel calls fired in loadProviderFromServer behind the
+            // first 5 instead of actually running all six at once.
+            .dispatcher(okhttp3.Dispatcher().apply { maxRequestsPerHost = 10 })
             .build()
     }
 }

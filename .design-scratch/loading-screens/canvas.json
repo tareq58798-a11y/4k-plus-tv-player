@@ -1,0 +1,12 @@
+{
+  "artboards": [
+    { "file": "Main.dc.html", "x": 0, "y": 0, "w": 390, "h": 844, "title": "Home — Dark" },
+    { "file": "HomeLight.dc.html", "x": 480, "y": 0, "w": 390, "h": 844, "title": "Home — Light" },
+    { "file": "Loading.dc.html", "x": 960, "y": 0, "w": 390, "h": 844, "title": "Loading — Dark" },
+    { "file": "LoadingLight.dc.html", "x": 1440, "y": 0, "w": 390, "h": 844, "title": "Loading — Light" }
+  ],
+  "annotations": [
+    { "id": "note-home", "x": 0, "y": -130, "w": 320, "text": "Home screens rebuilt from your two reference mockups — layout, tile treatments, chips and Featured row all match. Scene art in the cards is drawn as vector placeholders (no source photos available)." }
+  ],
+  "launch": { "view": "canvas" }
+}

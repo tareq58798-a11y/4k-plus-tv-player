@@ -19,8 +19,7 @@ app.post('/api/activate', async (req, res) => {
     return res.status(400).json({ status: 'error', message: 'Invalid mac or deviceKey.' });
   }
 
-  await db.upsertPendingDevice(mac, deviceKey);
-  const device = await db.getDevice(mac);
+  const device = await db.upsertPendingDevice(mac, deviceKey);
 
   if (!device || device.status !== 'assigned' || device.device_key !== deviceKey) {
     return res.json({ status: 'pending' });
@@ -40,6 +39,43 @@ app.post('/api/activate', async (req, res) => {
     });
   }
   return res.json({ status: 'pending' });
+});
+
+// In-memory only (cleared on restart) - cheap insurance against repeat lookups burning through
+// the YouTube Data API's daily quota (search.list costs 100 of the free tier's 10,000 units/day,
+// so only ~100 unique searches/day are free - this cache is what keeps popular titles from
+// re-spending quota every time a different device asks for the same trailer).
+const trailerCache = new Map();
+
+app.get('/api/trailer', async (req, res) => {
+  const title = String(req.query.title || '').trim();
+  const year = String(req.query.year || '').trim();
+  if (!title) return res.status(400).json({ videoId: null, message: 'Missing title.' });
+  if (!process.env.YOUTUBE_API_KEY) return res.json({ videoId: null });
+
+  const cacheKey = `${title.toLowerCase()}|${year}`;
+  if (trailerCache.has(cacheKey)) return res.json({ videoId: trailerCache.get(cacheKey) });
+
+  const query = [title, year, 'official trailer'].filter(Boolean).join(' ');
+  const url = new URL('https://www.googleapis.com/youtube/v3/search');
+  url.searchParams.set('part', 'snippet');
+  url.searchParams.set('type', 'video');
+  url.searchParams.set('maxResults', '1');
+  url.searchParams.set('q', query);
+  url.searchParams.set('key', process.env.YOUTUBE_API_KEY);
+
+  let videoId = null;
+  try {
+    const response = await fetch(url);
+    if (response.ok) {
+      const data = await response.json();
+      videoId = data.items?.[0]?.id?.videoId || null;
+    }
+  } catch {
+    // Falls through to the null response below - the app falls back to a plain search page.
+  }
+  trailerCache.set(cacheKey, videoId);
+  res.json({ videoId });
 });
 
 function requireAdmin(req, res, next) {

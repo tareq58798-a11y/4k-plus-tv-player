@@ -10,13 +10,18 @@ async function getDevice(mac) {
   return result.rows[0] || null;
 }
 
+// Combines the pending-device upsert with the row fetch into one round trip
+// (RETURNING * avoids a second query right after) since this runs on every
+// device activation poll.
 async function upsertPendingDevice(mac, deviceKey) {
-  await pool.query(
+  const result = await pool.query(
     `insert into devices (mac, device_key)
      values ($1, $2)
-     on conflict (mac) do update set last_seen = now()`,
+     on conflict (mac) do update set last_seen = now()
+     returning *`,
     [mac, deviceKey]
   );
+  return result.rows[0];
 }
 
 async function listDevices() {

@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+  <style>
+    body { margin: 0; font-family: 'Plus Jakarta Sans', 'Segoe UI', system-ui, sans-serif; }
+    a { color: #22C9F5; } a:hover { color: #7FE0FF; }
+    @keyframes ldSpin { to { transform: rotate(360deg); } }
+  </style>
+</helmet>
+<div style="position: relative; width: 390px; height: 844px; overflow: hidden; background: #04070F;">
+
+  <svg viewBox="0 0 390 844" preserveAspectRatio="none" style="position: absolute; inset: 0; width: 100%; height: 100%;">
+    <defs>
+      <linearGradient id="ldBg" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="#08182B"></stop><stop offset="38%" stop-color="#060F1F"></stop><stop offset="100%" stop-color="#04070F"></stop>
+      </linearGradient>
+      <radialGradient id="ldG1" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="{{glow}}" stop-opacity="0.55"></stop><stop offset="100%" stop-color="{{glow}}" stop-opacity="0"></stop>
+      </radialGradient>
+      <radialGradient id="ldG2" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#1268F3" stop-opacity="0.38"></stop><stop offset="100%" stop-color="#1268F3" stop-opacity="0"></stop>
+      </radialGradient>
+      <radialGradient id="ldG3" cx="50%" cy="50%" r="50%">
+        <stop offset="0%" stop-color="#20E3B2" stop-opacity="0.16"></stop><stop offset="100%" stop-color="#20E3B2" stop-opacity="0"></stop>
+      </radialGradient>
+      <filter id="ldBlur" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="44"></feGaussianBlur></filter>
+    </defs>
+    <rect width="390" height="844" fill="url(#ldBg)"></rect>
+    <g filter="url(#ldBlur)">
+      <ellipse cx="330" cy="230" rx="180" ry="105" fill="url(#ldG1)" transform="rotate(-26 330 230)"></ellipse>
+      <ellipse cx="370" cy="430" rx="150" ry="150" fill="url(#ldG2)"></ellipse>
+      <ellipse cx="50" cy="700" rx="190" ry="150" fill="url(#ldG3)"></ellipse>
+    </g>
+    <path d="M0 560 L58 498 L118 552 L182 486 L248 556 L306 508 L390 566 L390 844 L0 844 Z" fill="#060E1B" opacity="0.85"></path>
+    <path d="M0 620 L70 572 L140 616 L206 560 L280 618 L340 582 L390 626 L390 844 L0 844 Z" fill="#040913"></path>
+  </svg>
+
+  <div style="position: absolute; top: 64px; left: 28px; display: flex; flex-direction: column; gap: 1px; filter: drop-shadow(0 0 18px rgba(40,150,255,0.5));">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <svg width="46" height="38" viewBox="0 0 38 32" fill="none">
+        <defs>
+          <linearGradient id="ldTv" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#4AA8FF"></stop><stop offset="100%" stop-color="#1553C9"></stop></linearGradient>
+          <linearGradient id="ldPlay" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#FFC74A"></stop><stop offset="100%" stop-color="#F47A0E"></stop></linearGradient>
+        </defs>
+        <path d="M13 2 L19 7.5 L25 2" stroke="url(#ldTv)" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"></path>
+        <rect x="2" y="8" width="34" height="22" rx="6" stroke="url(#ldTv)" stroke-width="2.6"></rect>
+        <path d="M15 13.5 L25.5 19 L15 24.5 Z" fill="url(#ldPlay)"></path>
+      </svg>
+      <div style="font-size: 38px; font-weight: 800; letter-spacing: -1.2px; line-height: 1; background: linear-gradient(180deg, #8FD9FF 0%, #2E8BF5 45%, #0C3FA0 100%); -webkit-background-clip: text; background-clip: text; color: transparent;">4K</div>
+    </div>
+    <div style="display: flex; align-items: baseline; gap: 6px; padding-left: 3px;">
+      <div style="font-size: 16px; font-weight: 800; letter-spacing: 3px; background: linear-gradient(180deg, #FFFFFF 0%, #A9BCD2 100%); -webkit-background-clip: text; background-clip: text; color: transparent;">PLUS</div>
+      <div style="font-size: 16px; font-weight: 800; letter-spacing: 3px; background: linear-gradient(180deg, #FFC24A 0%, #F0820E 100%); -webkit-background-clip: text; background-clip: text; color: transparent;">TV</div>
+    </div>
+  </div>
+
+  <div style="position: absolute; left: 0; right: 0; top: 54%; display: flex; flex-direction: column; align-items: center; gap: 18px;">
+    <div style="width: 42px; height: 42px; border-radius: 50%; border: 3px solid rgba(255,255,255,0.12); border-top-color: {{glow}}; animation: ldSpin 0.9s linear infinite;"></div>
+    <div style="font-size: 14px; font-weight: 600; color: #C6D6E8;">Loading your playlist…</div>
+  </div>
+
+  <div style="position: absolute; left: 0; right: 0; bottom: 42px; text-align: center; font-size: 11px; font-weight: 500; color: #4E6580;">4K Plus TV Player</div>
+</div>
+</x-dc>
+<script data-dc-script data-props='{"glow":{"editor":"color","default":"#16C4F4","options":["#16C4F4","#1268F3","#20E3B2","#6FD8FF"]}}'>
+class Component extends DCLogic {
+  renderVals() {
+    return { glow: this.props.glow ?? '#16C4F4' };
+  }
+}
+</script>
+</body>
+</html>
